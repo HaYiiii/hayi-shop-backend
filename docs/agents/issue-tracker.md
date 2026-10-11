@@ -9,3 +9,11 @@ Work is tracked in **GitHub Issues** of this repo and on the shared **GitHub Pro
 - Blocking: use GitHub's native "blocked by" relationship where available; otherwise a `Blocked by: #n` line at the top of the body. Cross-repo references use `HaYiiii/<repo>#n`.
 - A ticket body must cite the canonical sections it implements (e.g. `Order §7.11`, `API 04-order §3.2`) and list the **seams under test** (see `tdd`).
 - PRs reference their ticket (`Closes #n`).
+
+## Breaking work into tickets (Decision J6)
+
+- Always use the `to-tickets` skill: **tracer-bullet vertical slices** (each demoable on its own), each with blocking edges.
+- **Draft first, publish only after the user approves the breakdown** (granularity, blocking edges, merge/split). Never publish unapproved tickets.
+- Issue body follows the skill's template (`What to build`, `Acceptance criteria`) plus `Canonical refs` and `Seams under test`.
+- Platform/infrastructure is built inside the first slice that needs it, not ahead of time.
+- Superseded tickets are closed as *not planned* with a comment pointing to the replacement, then archived from the board — never deleted.
