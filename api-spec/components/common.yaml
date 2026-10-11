@@ -1,0 +1,42 @@
+# Shared schemas — API Contract README §4–§8 (HaYi-Shop-Canonical-VI/docs/architecture/api/README.md)
+components:
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details with a stable business `code`.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string, description: 'Stable UPPER_SNAKE_CASE error code, e.g. ORDER_INVALID_TRANSITION' }
+        detail: { type: string }
+        traceId: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, code]
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+    MoneyVnd:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Amount in VND (đồng), integer only.
+    OffsetPage:
+      type: object
+      required: [number, size, totalItems, totalPages]
+      properties:
+        number: { type: integer }
+        size: { type: integer }
+        totalItems: { type: integer, format: int64 }
+        totalPages: { type: integer }
+    CursorPage:
+      type: object
+      required: [limit]
+      properties:
+        nextCursor: { type: string, nullable: true }
+        limit: { type: integer }

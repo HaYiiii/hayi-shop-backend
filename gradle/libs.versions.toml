@@ -1,0 +1,19 @@
+# Version catalog (Decision H1). Spring-managed dependencies take versions from the Spring Boot / Modulith BOMs.
+[versions]
+spring-boot = "4.1.1"
+spring-dependency-management = "1.1.7"
+spring-modulith = "2.1.1"
+archunit = "1.5.1"
+uuid-creator = "6.1.1"
+shedlock = "7.10.1"
+
+[libraries]
+spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "spring-modulith" }
+archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+uuid-creator = { module = "com.github.f4b6a3:uuid-creator", version.ref = "uuid-creator" }
+shedlock-spring = { module = "net.javacrumbs.shedlock:shedlock-spring", version.ref = "shedlock" }
+shedlock-jdbc = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }

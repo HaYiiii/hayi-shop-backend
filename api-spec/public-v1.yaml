@@ -1,0 +1,10 @@
+openapi: 3.1.0
+info:
+  title: HaYi Shop Public API
+  version: 1.0.0
+  description: |
+    Design-first spec (Decision G3). Endpoints are added per vertical slice from
+    HaYi-Shop-Canonical-VI/docs/architecture/api/*.md before implementation.
+servers:
+  - url: /api/public/v1
+paths: {}
