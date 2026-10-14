@@ -1,0 +1,70 @@
+# CI minimum for the backend — canonical SOURCE-STRUCTURE §4:
+# build, tests (Testcontainers MySQL 8.0), modularity/architecture tests, OpenAPI lint.
+# Public repo: no secrets are used here.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Superseded PR runs are cancelled; every commit on main keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # Caches Gradle and validates the wrapper; the cache is written only from main.
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Includes ModularityTest, ArchitectureTest and Testcontainers MySQL tests (Docker is on the runner).
+      - run: ./gradlew build
+
+      - name: Upload Spring Modulith docs
+        uses: actions/upload-artifact@v7
+        with:
+          name: spring-modulith-docs
+          path: build/spring-modulith-docs
+          if-no-files-found: error
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/test
+            build/test-results/test
+
+  openapi:
+    name: OpenAPI lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: npx --yes @redocly/cli@2.63.0 lint api-spec/*.yaml
+
+      # Consumed by the frontend to generate its API client.
+      - name: Upload API spec
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-spec
+          path: api-spec/
+          if-no-files-found: error
