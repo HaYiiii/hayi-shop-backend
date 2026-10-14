@@ -1,0 +1,17 @@
+# Redocly CLI lint config — CI runs `redocly lint` over every API listed here (SOURCE-STRUCTURE §2.8, §4).
+extends:
+  - recommended
+
+apis:
+  backoffice@v1:
+    root: api-spec/backoffice-v1.yaml
+  customer@v1:
+    root: api-spec/customer-v1.yaml
+  public@v1:
+    root: api-spec/public-v1.yaml
+  # Shared schema library, linted on its own so schemas no endpoint references yet are still checked.
+  components:
+    root: api-spec/components/common.yaml
+    rules:
+      no-empty-servers: off
+      no-unused-components: off

@@ -59,7 +59,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - run: npx --yes @redocly/cli@2.63.0 lint api-spec/*.yaml
+      # Lints every API listed in redocly.yaml, including the shared api-spec/components library.
+      - run: npx --yes @redocly/cli@2.63.0 lint
 
       # Consumed by the frontend to generate its API client.
       - name: Upload API spec
