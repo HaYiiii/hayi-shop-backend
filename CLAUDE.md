@@ -46,6 +46,8 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@25   # JDK is keg-only via Homebrew
 
 ## Workflow
 
+- **Start every ticket with `/ticket <n>`** (or `/ticket` to pick the next Ready one); review PRs with `/ticket review <pr>`, ideally in a fresh session. The skill encodes the whole flow: context → gate checks → plan (wait for approval) → TDD → verify → PR → In Review. Board operations go through `scripts/board.py`.
+
 - Tracker: GitHub Issues + Project "HaYi Shop" — see [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
 - **WIP ≤ 3 In Progress items across the project.** Check before starting a ticket.
 - Definition of Done: canonical `IMPLEMENTATION-PLAN.md` §1.1.
