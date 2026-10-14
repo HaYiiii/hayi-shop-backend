@@ -3,6 +3,7 @@ package vn.hayi.shop.platform.web;
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +21,7 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import vn.hayi.shop.shared.error.CommonErrorCode;
+import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.error.ErrorCode;
 
 /**
@@ -35,6 +37,11 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
 	GlobalExceptionHandler(ProblemFactory problems) {
 		this.problems = problems;
+	}
+
+	@ExceptionHandler(DomainException.class)
+	ResponseEntity<ProblemDetail> handleDomain(DomainException ex, HttpServletRequest request) {
+		return respond(ex.code(), request, ex.detailArgs());
 	}
 
 	@ExceptionHandler(AuthenticationException.class)
@@ -59,6 +66,20 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 		ProblemDetail problem = this.problems.create(CommonErrorCode.VALIDATION_FAILED, servletRequest);
 		problem.setProperty("errors", this.problems.fieldViolations(ex.getBindingResult(), servletRequest));
 		return ResponseEntity.badRequest().headers(headers).body(problem);
+	}
+
+	/**
+	 * Every other Spring MVC error (malformed JSON, missing parameter, unknown route, wrong method…) gets a fresh
+	 * problem in our shape, so framework/parser wording never reaches the client. Request-shape errors (400) are
+	 * {@code VALIDATION_FAILED}; the rest use the status name as code (e.g. {@code METHOD_NOT_ALLOWED}).
+	 */
+	@Override
+	protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body, HttpHeaders headers,
+			HttpStatusCode statusCode, WebRequest request) {
+		HttpStatus status = HttpStatus.valueOf(statusCode.value());
+		String code = (status == HttpStatus.BAD_REQUEST) ? CommonErrorCode.VALIDATION_FAILED.name() : status.name();
+		ProblemDetail problem = this.problems.create(status, code, ((ServletWebRequest) request).getRequest());
+		return ResponseEntity.status(status).headers(headers).body(problem);
 	}
 
 	private ResponseEntity<ProblemDetail> respond(ErrorCode code, HttpServletRequest request, Object... detailArgs) {
