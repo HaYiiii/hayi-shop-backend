@@ -18,6 +18,10 @@ spring:
     locations: classpath:db/migration
   jackson:
     time-zone: UTC
+  messages:
+    fallback-to-system-locale: false   # messages.properties (vi-VN) is the fallback, never the JVM locale
+  web:
+    locale: vi_VN                      # default when Accept-Language is absent (API README §6)
   docker:
     compose:
       lifecycle-management: start-only
