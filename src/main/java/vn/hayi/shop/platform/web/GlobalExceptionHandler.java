@@ -2,6 +2,8 @@ package vn.hayi.shop.platform.web;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -31,6 +33,8 @@ import vn.hayi.shop.shared.error.ErrorCode;
 @RestControllerAdvice
 class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
+	private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
 	private static final AuthenticationTrustResolver TRUST_RESOLVER = new AuthenticationTrustResolverImpl();
 
 	private final ProblemFactory problems;
@@ -57,6 +61,13 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 			return respond(CommonErrorCode.PERMISSION_DENIED, request);
 		}
 		return respond(CommonErrorCode.AUTH_REQUIRED, request);
+	}
+
+	/** Last resort: full detail goes to the server log (with traceId), never to the client. */
+	@ExceptionHandler(Exception.class)
+	ResponseEntity<ProblemDetail> handleUnexpected(Exception ex, HttpServletRequest request) {
+		LOG.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
+		return respond(CommonErrorCode.INTERNAL_ERROR, request);
 	}
 
 	@Override

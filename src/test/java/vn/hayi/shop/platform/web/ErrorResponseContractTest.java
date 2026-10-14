@@ -1,5 +1,6 @@
 package vn.hayi.shop.platform.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.containsStringIgnoringCase;
 import static org.hamcrest.Matchers.matchesPattern;
@@ -16,10 +17,13 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
@@ -34,6 +38,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import vn.hayi.shop.TestcontainersConfiguration;
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.error.ErrorCode;
@@ -45,12 +51,17 @@ import vn.hayi.shop.shared.error.ErrorKind;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@ExtendWith(OutputCaptureExtension.class)
 @Import({ TestcontainersConfiguration.class, ErrorResponseContractTest.ProbeController.class })
 class ErrorResponseContractTest {
 
 	private static final String PROBE = "/api/backoffice/v1/__probe";
 
+	static final String BOOM_MESSAGE = "select * from iam_user -- secret";
+
 	private static final String TRACE_ID = "[0-9a-f]{32}";
+
+	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	@Autowired
 	MockMvc mvc;
@@ -134,6 +145,37 @@ class ErrorResponseContractTest {
 		assertTraceIdInBodyMatchesHeader(result);
 	}
 
+	@Test
+	@WithMockUser
+	void unexpectedFailureGets500InternalErrorWithoutStackTraceOrMessage() throws Exception {
+		MvcResult result = mvc.perform(get(PROBE + "/boom"))
+			.andExpect(status().isInternalServerError())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+			.andExpect(content().string(not(containsString(BOOM_MESSAGE))))
+			.andExpect(content().string(not(containsString("IllegalStateException"))))
+			.andExpect(content().string(not(containsString("at vn.hayi"))))
+			.andReturn();
+
+		assertTraceIdInBodyMatchesHeader(result);
+	}
+
+	@Test
+	@WithMockUser
+	void serverLogLineCarriesSameTraceIdAsResponseHeader(CapturedOutput output) throws Exception {
+		String traceId = mvc.perform(get(PROBE + "/boom"))
+			.andExpect(status().isInternalServerError())
+			.andReturn().getResponse().getHeader("X-Trace-Id");
+
+		JsonNode errorLine = output.getOut().lines()
+			.filter(line -> line.startsWith("{") && line.contains(BOOM_MESSAGE))
+			.map(JSON::readTree)
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("no JSON log line for the failure"));
+		assertThat(errorLine.path("level").asString()).isEqualTo("ERROR");
+		assertThat(errorLine.path("traceId").asString()).isEqualTo(traceId);
+	}
+
 	private static void assertTraceIdInBodyMatchesHeader(MvcResult result) throws Exception {
 		jsonPath("$.traceId").value(result.getResponse().getHeader("X-Trace-Id")).match(result);
 	}
@@ -151,6 +193,11 @@ class ErrorResponseContractTest {
 		@GetMapping("/domain-error/{code}")
 		void domainError(@PathVariable ProbeErrorCode code) {
 			throw new DomainException(code, "probe " + code);
+		}
+
+		@GetMapping("/boom")
+		void boom() {
+			throw new IllegalStateException(BOOM_MESSAGE);
 		}
 
 		@PostMapping("/validated")

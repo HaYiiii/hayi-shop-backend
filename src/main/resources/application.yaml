@@ -43,3 +43,8 @@ management:
 
 hayi:
   operational-timezone: Asia/Ho_Chi_Minh
+
+logging:
+  structured:
+    format:
+      console: logstash   # JSON by default (Observability §19.2); MDC traceId becomes a top-level field
