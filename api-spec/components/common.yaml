@@ -1,4 +1,9 @@
 # Shared schemas — API Contract README §4–§8 (HaYi-Shop-Canonical-VI/docs/architecture/api/README.md)
+# Standalone OpenAPI 3.1 document so CI lints every shared schema, including ones no endpoint references yet.
+openapi: 3.1.0
+info:
+  title: HaYi Shop shared components
+  version: 1.0.0
 components:
   schemas:
     Problem:
@@ -38,5 +43,5 @@ components:
       type: object
       required: [limit]
       properties:
-        nextCursor: { type: string, nullable: true }
+        nextCursor: { type: [string, "null"] }
         limit: { type: integer }
