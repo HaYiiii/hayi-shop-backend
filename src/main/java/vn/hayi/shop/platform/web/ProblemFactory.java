@@ -1,6 +1,7 @@
 package vn.hayi.shop.platform.web;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -10,9 +11,11 @@ import org.springframework.context.MessageSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.BindingResult;
 import org.springframework.web.servlet.LocaleResolver;
 
 import vn.hayi.shop.platform.observability.TraceIds;
+import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.ErrorCode;
 import vn.hayi.shop.shared.error.ErrorKind;
 
@@ -61,6 +64,26 @@ class ProblemFactory {
 		problem.setProperty("code", code);
 		decorate(problem);
 		return problem;
+	}
+
+	/** {@code errors[]} entries for field validation (API README §6); messages localized like title/detail. */
+	List<FieldViolation> fieldViolations(BindingResult result, HttpServletRequest request) {
+		Locale locale = this.localeResolver.resolveLocale(request);
+		return result.getFieldErrors().stream()
+			.map(error -> new FieldViolation(error.getField(), toUpperSnake(error.getCode()),
+					this.messages.getMessage(error, locale)))
+			.toList();
+	}
+
+	/** {@code NotBlank} → {@code NOT_BLANK}. */
+	private static String toUpperSnake(String constraint) {
+		if (constraint == null) {
+			return CommonErrorCode.VALIDATION_FAILED.name();
+		}
+		return constraint.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toUpperCase(Locale.ROOT);
+	}
+
+	record FieldViolation(String field, String code, String message) {
 	}
 
 	/** Adds the request's trace id; every problem carries it (API README §9). */
