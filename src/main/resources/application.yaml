@@ -40,6 +40,12 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState               # optional dependencies never fail liveness (Observability §19.5)
+        readiness:
+          include: readinessState,db           # can we safely serve traffic?
+          show-components: always              # component names + status only, never details
 
 hayi:
   operational-timezone: Asia/Ho_Chi_Minh
