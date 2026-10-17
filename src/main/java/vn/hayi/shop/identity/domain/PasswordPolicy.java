@@ -1,7 +1,14 @@
 package vn.hayi.shop.identity.domain;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import vn.hayi.shop.shared.error.DomainException;
 
@@ -15,15 +22,8 @@ public final class PasswordPolicy {
 
 	public static final int MAX_LENGTH = 128;
 
-	/** Common passwords of policy length; compared case-insensitively. */
-	private static final Set<String> COMMON = Set.of("123456789012", "1234567890123", "12345678901234",
-			"123456123456", "111111111111", "000000000000", "123123123123", "qwertyuiopas", "qwerty123456",
-			"qwertyuiop12", "qwertyuiop123", "1q2w3e4r5t6y", "1qaz2wsx3edc", "zaq12wsxcde3", "password1234",
-			"password12345", "password123456", "password@123", "password!123", "passwordpassword", "iloveyou1234",
-			"abcdefghijkl", "abcd12345678", "abc123456789", "admin1234567", "administrator", "welcome12345",
-			"letmein12345", "changeme1234", "football1234", "baseball1234", "sunshine1234", "princess1234",
-			"superman1234", "trustno11234", "matkhau12345", "matkhau123456", "anhyeuem1234", "hayishop1234",
-			"hayishop2026", "hayi12345678", "owner1234567");
+	/** Common passwords of policy length, lowercased; loaded once from the classpath. */
+	private static final Set<String> COMMON = loadCommonPasswords();
 
 	private PasswordPolicy() {
 	}
@@ -32,6 +32,22 @@ public final class PasswordPolicy {
 		int length = password.codePointCount(0, password.length());
 		if (length < MIN_LENGTH || length > MAX_LENGTH || COMMON.contains(password.toLowerCase(Locale.ROOT))) {
 			throw violation();
+		}
+	}
+
+	private static Set<String> loadCommonPasswords() {
+		try (InputStream in = PasswordPolicy.class.getResourceAsStream("/identity/common-passwords.txt")) {
+			if (in == null) {
+				throw new IllegalStateException("identity/common-passwords.txt missing from the classpath");
+			}
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+				return reader.lines()
+					.filter(line -> !line.isBlank() && !line.startsWith("#"))
+					.collect(Collectors.toUnmodifiableSet());
+			}
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
 		}
 	}
 

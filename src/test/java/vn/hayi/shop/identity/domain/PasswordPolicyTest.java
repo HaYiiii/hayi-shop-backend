@@ -18,7 +18,7 @@ class PasswordPolicyTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "eleven char", "Password1234", "QWERTY123456", "matkhau12345" })
+	@ValueSource(strings = { "eleven char", "Password1234", "QWERTY123456", "matkhau12345", "ManchesterUnited", "1234567890qwerty" })
 	void rejectsShortOrCommonPasswords(String password) {
 		assertThatThrownBy(() -> PasswordPolicy.check(password)).isInstanceOf(DomainException.class)
 			.extracting(ex -> ((DomainException) ex).code())
