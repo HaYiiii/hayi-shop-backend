@@ -3,7 +3,13 @@ package vn.hayi.shop.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -220,6 +226,25 @@ class BackofficeLoginTest {
 		this.auth.changeFirstPassword(changeToken, "a much longer new passphrase");
 
 		assertProblem(this.auth.changeFirstPassword(changeToken, "another long passphrase!"), 401, "AUTH_REQUIRED");
+	}
+
+	@Test
+	void changeTokenUsedConcurrentlySucceedsOnce() throws Exception {
+		this.fixtures.storeAdmin(this.email, IdentityFixtures.PASSWORD, true);
+		String changeToken = changeToken();
+		CountDownLatch start = new CountDownLatch(1);
+		Callable<Integer> change = () -> {
+			start.await();
+			return this.auth.changeFirstPassword(changeToken, "a much longer new passphrase").getStatus();
+		};
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<Integer> first = executor.submit(change);
+			Future<Integer> second = executor.submit(change);
+			start.countDown();
+
+			assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(204, 401);
+		}
 	}
 
 	@Test

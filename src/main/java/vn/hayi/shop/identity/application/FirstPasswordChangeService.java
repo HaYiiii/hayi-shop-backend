@@ -46,7 +46,7 @@ public class FirstPasswordChangeService {
 	@Transactional
 	public void change(String changeToken, String newPassword, ClientInfo client) {
 		UserCredential credential = this.tokens.verifyPasswordChangeToken(changeToken)
-			.flatMap(this.credentials::findById)
+			.flatMap(this.credentials::findByIdForUpdate)
 			.filter(UserCredential::isMustChangePassword)
 			.orElseThrow(() -> new DomainException(CommonErrorCode.AUTH_REQUIRED, "Invalid or used change token"));
 		PasswordPolicy.check(newPassword);
