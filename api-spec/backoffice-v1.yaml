@@ -5,6 +5,207 @@ info:
   description: |
     Design-first spec (Decision G3). Endpoints are added per vertical slice from
     HaYi-Shop-Canonical-VI/docs/architecture/api/*.md before implementation.
+
+    Authentication uses cookies only (API 01-security §3): `hy_b_at` (access JWT), `hy_b_rt` (refresh token)
+    and `hy_csrf` (double-submit token, sent back as `X-CSRF-Token` on every unsafe request with a session).
 servers:
   - url: /api/backoffice/v1
-paths: {}
+tags:
+  - name: Auth
+    description: Backoffice login, session and CSRF (API 01-security §5–6, Decision K)
+security:
+  - accessCookie: []
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Log in with email and password
+      description: |
+        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and returns an empty object.
+        A user with a temporary password gets `passwordChangeRequired` + `changeToken` instead and no cookie
+        (Decision K3). Wrong identifier or password → `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures
+        in 15 minutes → `429 AUTH_LOGIN_LOCKED` with `Retry-After` (Decision K2).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Logged in, or a password change is required first.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/password/first-change:
+    post:
+      tags: [Auth]
+      operationId: changeFirstPassword
+      summary: Replace the temporary password
+      description: |
+        Uses the `changeToken` from login (TTL 5 minutes). Returns `204` without a session; the user logs in again
+        with the new password (Decision K3). Password policy: 12–128 characters, different from the current one,
+        not a common password → otherwise `422 AUTH_PASSWORD_POLICY_VIOLATION` (Decision K4).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FirstPasswordChangeRequest' }
+      responses:
+        '204':
+          description: Password changed.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolated' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refresh
+      summary: Rotate the refresh token
+      description: |
+        Issues a new access token and refresh token and marks the old refresh token rotated. Reusing a rotated
+        token within 10 seconds returns the pair already issued; later reuse revokes the whole session
+        (`401 AUTH_SESSION_REVOKED`, API 01-security §5). Requires `X-CSRF-Token`.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RefreshTokenCookie'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Tokens rotated.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the current session
+      description: Revokes the session and clears the auth cookies. Idempotent. Requires `X-CSRF-Token`.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RefreshTokenCookie'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session revoked and cookies cleared.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/csrf:
+    get:
+      tags: [Auth]
+      operationId: issueCsrfToken
+      summary: Re-issue the CSRF cookie
+      description: Sets a fresh `hy_csrf` bound to the current session (API 01-security §3.1).
+      responses:
+        '204':
+          description: CSRF cookie set.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: hy_b_at
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: hy_b_rt
+  parameters:
+    RefreshTokenCookie:
+      name: hy_b_rt
+      in: cookie
+      required: false
+      description: Opaque refresh token; missing or unknown → `401 AUTH_REQUIRED`.
+      schema: { type: string, maxLength: 512 }
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
+      schema: { type: string, maxLength: 512 }
+  headers:
+    SetCookie:
+      description: Auth cookies (API 01-security §3).
+      schema: { type: string }
+  schemas:
+    Problem:
+      $ref: './components/common.yaml#/components/schemas/Problem'
+    LoginRequest:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Email (Owner/Admin). Employee code and phone arrive with staff provisioning.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    LoginResponse:
+      type: object
+      description: Empty when logged in; otherwise says which step must come first.
+      properties:
+        passwordChangeRequired:
+          type: boolean
+        changeToken:
+          type: string
+          description: Single-purpose token for `POST /auth/password/first-change`, valid 5 minutes.
+    FirstPasswordChangeRequest:
+      type: object
+      required: [changeToken, newPassword]
+      properties:
+        changeToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        newPassword:
+          type: string
+          minLength: 1
+          maxLength: 1024
+  responses:
+    ValidationFailed:
+      description: '`VALIDATION_FAILED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: '`AUTH_REQUIRED`, `AUTH_TOKEN_EXPIRED`, `AUTH_SESSION_REVOKED`, `AUTH_INVALID_CREDENTIALS`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: '`CSRF_INVALID`, `PERMISSION_DENIED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    BusinessRuleViolated:
+      description: '`AUTH_PASSWORD_POLICY_VIOLATION`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: '`AUTH_LOGIN_LOCKED`'
+      headers:
+        Retry-After:
+          description: Seconds until the account unlocks.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
