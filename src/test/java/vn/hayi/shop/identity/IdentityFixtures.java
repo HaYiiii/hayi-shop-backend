@@ -68,6 +68,12 @@ class IdentityFixtures {
 		return userId;
 	}
 
+	/** Revokes the user's sessions straight in the database, as another instance would. */
+	void revokeSessionsElsewhere(UUID userId) {
+		this.jdbc.sql("UPDATE iam_user_session SET revoked_at = ?, revoke_reason = 'LOGOUT' WHERE user_id = ?")
+			.params(Instant.now(), id(userId)).update();
+	}
+
 	long securityEvents(String type, UUID userId) {
 		return this.jdbc.sql("SELECT COUNT(*) FROM iam_security_event WHERE event_type = ? AND user_id = ?")
 			.params(type, id(userId)).query(Long.class).single();

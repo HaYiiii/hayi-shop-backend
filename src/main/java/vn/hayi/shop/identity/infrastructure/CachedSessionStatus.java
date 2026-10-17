@@ -10,6 +10,8 @@ import java.util.UUID;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -36,16 +38,17 @@ public class CachedSessionStatus implements SessionStatusChecker {
 
 	private final Clock clock;
 
-	CachedSessionStatus(JdbcClient jdbc, Clock clock) {
+	/**
+	 * @param ticker measures the TTL; the monotonic system ticker unless a test supplies one that follows its clock
+	 * (a wall-clock ticker would keep entries past the TTL when the system clock steps back)
+	 */
+	CachedSessionStatus(JdbcClient jdbc, Clock clock, ObjectProvider<Ticker> ticker) {
 		this.jdbc = jdbc;
 		this.clock = clock;
 		this.cache = Caffeine.newBuilder()
 			.expireAfterWrite(TTL)
 			.maximumSize(MAXIMUM_SIZE)
-			.ticker(() -> {
-				Instant now = clock.instant();
-				return now.getEpochSecond() * 1_000_000_000L + now.getNano();
-			})
+			.ticker(ticker.getIfAvailable(Ticker::systemTicker))
 			.build();
 	}
 

@@ -121,6 +121,17 @@ class BackofficeSessionTest {
 	}
 
 	@Test
+	void sessionRevokedByAnotherInstanceRefusedOnceTheCacheTtlPasses() throws Exception {
+		Session session = login();
+		assertThat(this.auth.csrf(session).getStatus()).isEqualTo(204);
+
+		this.fixtures.revokeSessionsElsewhere(this.userId);
+		this.clock.advance(Duration.ofSeconds(31));
+
+		assertProblem(this.auth.csrf(session), 401, "AUTH_SESSION_REVOKED");
+	}
+
+	@Test
 	void logoutRevokesSessionAndClearsCookies() throws Exception {
 		Session session = login();
 
