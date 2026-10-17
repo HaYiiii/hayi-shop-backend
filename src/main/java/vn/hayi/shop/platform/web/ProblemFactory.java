@@ -44,6 +44,7 @@ class ProblemFactory {
 			case NOT_FOUND -> HttpStatus.NOT_FOUND;
 			case CONFLICT -> HttpStatus.CONFLICT;
 			case BUSINESS_RULE -> HttpStatus.UNPROCESSABLE_CONTENT;
+			case TOO_MANY_REQUESTS -> HttpStatus.TOO_MANY_REQUESTS;
 			case INTERNAL -> HttpStatus.INTERNAL_SERVER_ERROR;
 		};
 	}

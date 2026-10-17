@@ -6,6 +6,8 @@ spring-modulith = "2.1.1"
 archunit = "1.5.1"
 uuid-creator = "6.1.1"
 shedlock = "7.10.1"
+openapi-generator = "7.26.0"
+bouncycastle = "1.86"
 
 [libraries]
 spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "spring-modulith" }
@@ -13,7 +15,10 @@ archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref
 uuid-creator = { module = "com.github.f4b6a3:uuid-creator", version.ref = "uuid-creator" }
 shedlock-spring = { module = "net.javacrumbs.shedlock:shedlock-spring", version.ref = "shedlock" }
 shedlock-jdbc = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
+# Argon2id password hashing (ERD 01 iam_user_credential)
+bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
+openapi-generator = { id = "org.openapi.generator", version.ref = "openapi-generator" }
