@@ -22,9 +22,11 @@ import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import vn.hayi.shop.platform.security.AuthErrors;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.error.ErrorCode;
+import vn.hayi.shop.shared.error.ThrottledException;
 
 /**
  * Single place that turns exceptions into Problem Details (API README §6). Also serves errors raised by the
@@ -45,12 +47,20 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
 	@ExceptionHandler(DomainException.class)
 	ResponseEntity<ProblemDetail> handleDomain(DomainException ex, HttpServletRequest request) {
-		return respond(ex.code(), request, ex.detailArgs());
+		ResponseEntity<ProblemDetail> response = respond(ex.code(), request, ex.detailArgs());
+		if (ex instanceof ThrottledException throttled) {
+			long seconds = Math.max(1, (throttled.retryAfter().toMillis() + 999) / 1000);
+			return ResponseEntity.status(response.getStatusCode())
+				.header(HttpHeaders.RETRY_AFTER, Long.toString(seconds))
+				.body(response.getBody());
+		}
+		return response;
 	}
 
+	/** {@code AUTH_REQUIRED}, or the precise cause: {@code AUTH_TOKEN_EXPIRED}, {@code AUTH_SESSION_REVOKED}. */
 	@ExceptionHandler(AuthenticationException.class)
 	ResponseEntity<ProblemDetail> handleUnauthenticated(AuthenticationException ex, HttpServletRequest request) {
-		return respond(CommonErrorCode.AUTH_REQUIRED, request);
+		return respond(AuthErrors.codeOf(ex), request);
 	}
 
 	/** Anonymous callers hitting a protected method must sign in first, so they get 401 rather than 403. */
