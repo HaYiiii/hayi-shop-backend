@@ -1,4 +1,4 @@
-package vn.hayi.shop.platform.persistence;
+package vn.hayi.shop.platform.time;
 
 import java.time.Clock;
 

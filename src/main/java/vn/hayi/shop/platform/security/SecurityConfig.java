@@ -1,5 +1,10 @@
 package vn.hayi.shop.platform.security;
 
+import java.io.IOException;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,9 +36,17 @@ class SecurityConfig {
 				.requestMatchers("/api/public/**", "/actuator/health", "/actuator/health/**", "/error").permitAll()
 				.anyRequest().authenticated())
 			.exceptionHandling(errors -> errors
-				.authenticationEntryPoint((request, response, ex) -> exceptionResolver.resolveException(request, response, null, ex))
-				.accessDeniedHandler((request, response, ex) -> exceptionResolver.resolveException(request, response, null, ex)))
+				.authenticationEntryPoint((request, response, ex) -> renderProblem(exceptionResolver, request, response, ex, HttpServletResponse.SC_UNAUTHORIZED))
+				.accessDeniedHandler((request, response, ex) -> renderProblem(exceptionResolver, request, response, ex, HttpServletResponse.SC_FORBIDDEN)))
 			.build();
+	}
+
+	/** Never leaves the client with an empty 200: if no handler took the exception, fall back to the bare status. */
+	private static void renderProblem(HandlerExceptionResolver resolver, HttpServletRequest request,
+			HttpServletResponse response, Exception ex, int fallbackStatus) throws IOException {
+		if (resolver.resolveException(request, response, null, ex) == null) {
+			response.sendError(fallbackStatus);
+		}
 	}
 
 }
