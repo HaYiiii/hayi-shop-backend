@@ -23,7 +23,6 @@ spring:
     locations: classpath:db/migration
   jackson:
     time-zone: UTC
-    default-property-inclusion: non_null   # optional response fields are omitted, not sent as null
   messages:
     fallback-to-system-locale: false   # messages.properties (vi-VN) is the fallback, never the JVM locale
   web:

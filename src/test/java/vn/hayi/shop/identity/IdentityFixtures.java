@@ -39,6 +39,20 @@ class IdentityFixtures {
 	}
 
 	UUID storeAdmin(String email, String password, boolean mustChangePassword) {
+		UUID userId = userWithoutRole(email, password, mustChangePassword);
+		this.jdbc.sql("""
+				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
+				SELECT ?, ?, id, ? FROM iam_role WHERE code = 'ADMIN'
+				""").params(id(UuidV7.generate()), id(userId), Instant.now()).update();
+		return userId;
+	}
+
+	/** A user with a password but no STORE role, e.g. a customer account: no Backoffice access. */
+	UUID withoutBackofficeAccess(String email) {
+		return userWithoutRole(email, PASSWORD, false);
+	}
+
+	private UUID userWithoutRole(String email, String password, boolean mustChangePassword) {
 		UUID userId = UuidV7.generate();
 		Instant now = Instant.now();
 		this.jdbc.sql("INSERT INTO iam_user (id, status, created_at, updated_at) VALUES (?, 'ACTIVE', ?, ?)")
@@ -51,10 +65,6 @@ class IdentityFixtures {
 				INSERT INTO iam_user_credential (user_id, password_hash, must_change_password, password_changed_at, updated_at)
 				VALUES (?, ?, ?, ?, ?)
 				""").params(id(userId), this.passwordEncoder.encode(password), mustChangePassword, now, now).update();
-		this.jdbc.sql("""
-				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
-				SELECT ?, ?, id, ? FROM iam_role WHERE code = 'ADMIN'
-				""").params(id(UuidV7.generate()), id(userId), now).update();
 		return userId;
 	}
 

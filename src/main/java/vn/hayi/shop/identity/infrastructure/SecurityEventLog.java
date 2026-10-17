@@ -2,11 +2,9 @@ package vn.hayi.shop.identity.infrastructure;
 
 import static vn.hayi.shop.platform.persistence.UuidBinary.toBytes;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -24,6 +22,9 @@ import vn.hayi.shop.shared.id.UuidV7;
  */
 @Component
 public class SecurityEventLog implements SecurityEventSink {
+
+	/** {@code LOGIN_FAILED} reason for a correct password on an account without Backoffice access. */
+	public static final String NO_BACKOFFICE_ACCESS = "NO_BACKOFFICE_ACCESS";
 
 	private final JdbcClient jdbc;
 
@@ -56,13 +57,18 @@ public class SecurityEventLog implements SecurityEventSink {
 			.update();
 	}
 
-	/** When the user's latest failed login happened, to tell a streak of failures from scattered ones. */
-	public Optional<Instant> lastLoginFailure(UUID userId) {
+	/**
+	 * Wrong-password logins of the user after {@code since}. A correct password without Backoffice access is a
+	 * {@code LOGIN_FAILED} too, but does not count (Decision K2).
+	 */
+	public int countLoginFailures(UUID userId, Instant since) {
 		return this.jdbc.sql("""
-				SELECT MAX(occurred_at) FROM iam_security_event WHERE user_id = ? AND event_type = 'LOGIN_FAILED'
+				SELECT COUNT(*) FROM iam_security_event
+				WHERE user_id = ? AND event_type = 'LOGIN_FAILED' AND occurred_at > ?
+				  AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.reason')), '') <> ?
 				""")
-			.param(toBytes(userId))
-			.query((rs, n) -> Optional.ofNullable(rs.getTimestamp(1)).map(Timestamp::toInstant))
+			.params(toBytes(userId), since, NO_BACKOFFICE_ACCESS)
+			.query(Integer.class)
 			.single();
 	}
 

@@ -13,6 +13,7 @@ import vn.hayi.shop.identity.domain.IdentifierType;
 import vn.hayi.shop.identity.domain.IdentityErrorCode;
 import vn.hayi.shop.identity.domain.LoginIdentifier;
 import vn.hayi.shop.identity.domain.LoginIdentifierRepository;
+import vn.hayi.shop.identity.domain.LoginLockPolicy;
 import vn.hayi.shop.identity.domain.RefreshToken;
 import vn.hayi.shop.identity.domain.SessionChannel;
 import vn.hayi.shop.identity.domain.User;
@@ -27,7 +28,6 @@ import vn.hayi.shop.identity.infrastructure.SecurityEventType;
 import vn.hayi.shop.platform.security.Tokens;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.shared.actor.Persona;
-import vn.hayi.shop.shared.error.CommonErrorCode;
 
 /**
  * Backoffice login with email + password (Identity §2.2, §2.5, API 01-security §6.2–6.3, Decision K2–K3).
@@ -93,19 +93,20 @@ public class LoginService {
 		User user = found.get();
 		if (user.isLocked(now)) {
 			this.securityEvents.record(SecurityEventType.LOGIN_BLOCKED, user.getId(), null, client);
-			return new LoginResult.Locked(user.lockRemaining(now));
+			return new LoginResult.Locked(IdentityErrorCode.AUTH_LOGIN_LOCKED, user.lockRemaining(now));
 		}
 		UserCredential credential = this.credentials.findById(user.getId()).orElse(null);
 		if (!user.isActive() || credential == null || !this.passwordEncoder.matches(password, credential.getPasswordHash())) {
 			return registerFailure(user, now, client);
 		}
-		user.registerSuccessfulLogin(now);
 		if (!this.roles.hasAnyStoreRole(user.getId())) {
 			// Persona STAFF needs a STORE role or an active StaffProfile (Identity §2.5); staff profiles come later.
+			// Answered like a wrong password so this endpoint never confirms another persona's password (Decision K2).
 			this.securityEvents.record(SecurityEventType.LOGIN_FAILED, user.getId(), null, null, client,
-					Map.of("reason", "NO_BACKOFFICE_ACCESS"));
-			return new LoginResult.Rejected(CommonErrorCode.PERMISSION_DENIED);
+					Map.of("reason", SecurityEventLog.NO_BACKOFFICE_ACCESS));
+			return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
 		}
+		user.registerSuccessfulLogin(now);
 		if (credential.isMustChangePassword()) {
 			this.securityEvents.record(SecurityEventType.LOGIN_SUCCESS, user.getId(), null, null, client,
 					Map.of("next", "PASSWORD_CHANGE"));
@@ -121,12 +122,13 @@ public class LoginService {
 	}
 
 	private LoginResult registerFailure(User user, Instant now, ClientInfo client) {
-		Instant previousFailure = this.securityEvents.lastLoginFailure(user.getId()).orElse(null);
-		boolean locked = user.registerFailedLogin(now, previousFailure, this.properties.login().lockPolicy());
+		LoginLockPolicy policy = this.properties.login().lockPolicy();
+		int earlierFailures = this.securityEvents.countLoginFailures(user.getId(), user.failureWindowStart(now, policy));
+		boolean locked = user.registerFailedLogin(now, earlierFailures, policy);
 		this.securityEvents.record(SecurityEventType.LOGIN_FAILED, user.getId(), null, client);
 		if (locked) {
 			this.securityEvents.record(SecurityEventType.ACCOUNT_LOCKED, user.getId(), null, client);
-			return new LoginResult.Locked(user.lockRemaining(now));
+			return new LoginResult.Locked(IdentityErrorCode.AUTH_LOGIN_LOCKED, user.lockRemaining(now));
 		}
 		return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
 	}

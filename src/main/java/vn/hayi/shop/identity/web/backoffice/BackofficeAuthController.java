@@ -16,7 +16,6 @@ import vn.hayi.shop.identity.application.LoginService;
 import vn.hayi.shop.identity.application.RefreshResult;
 import vn.hayi.shop.identity.application.SessionService;
 import vn.hayi.shop.identity.application.SessionTokens;
-import vn.hayi.shop.identity.domain.IdentityErrorCode;
 import vn.hayi.shop.platform.security.AuthCookies;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.CsrfTokens;
@@ -60,11 +59,11 @@ class BackofficeAuthController implements AuthApi {
 	public ResponseEntity<LoginResponseDto> login(LoginRequestDto body) {
 		return switch (this.login.loginBackoffice(body.getIdentifier(), body.getPassword(), client())) {
 			case LoginResult.Authenticated authenticated ->
-				ResponseEntity.ok().headers(setCookies(sessionCookies(authenticated.tokens()))).body(new LoginResponseDto());
+				ResponseEntity.ok().headers(setCookies(sessionCookies(authenticated.tokens()))).body(new LoginResponseDto(false, null));
 			case LoginResult.PasswordChangeRequired change ->
-				ResponseEntity.ok(new LoginResponseDto().passwordChangeRequired(true).changeToken(change.changeToken()));
+				ResponseEntity.ok(new LoginResponseDto(true, change.changeToken()));
 			case LoginResult.Rejected rejected -> throw new DomainException(rejected.code(), "Login rejected");
-			case LoginResult.Locked locked -> throw new ThrottledException(IdentityErrorCode.AUTH_LOGIN_LOCKED,
+			case LoginResult.Locked locked -> throw new ThrottledException(locked.code(),
 					"Login locked", locked.retryAfter(), Math.max(1, (locked.retryAfter().toSeconds() + 59) / 60));
 		};
 	}

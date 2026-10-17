@@ -20,7 +20,7 @@ public sealed interface LoginResult {
 	record Rejected(ErrorCode code) implements LoginResult {
 	}
 
-	record Locked(Duration retryAfter) implements LoginResult {
+	record Locked(ErrorCode code, Duration retryAfter) implements LoginResult {
 	}
 
 }

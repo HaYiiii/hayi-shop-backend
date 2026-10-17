@@ -74,19 +74,29 @@ public class User {
 	}
 
 	/**
+	 * Start of the sliding window in which failed logins count (Decision K2): never before the last successful login
+	 * or the end of the last lock.
+	 */
+	public Instant failureWindowStart(Instant now, LoginLockPolicy policy) {
+		Instant start = now.minus(policy.failureWindow());
+		if (this.lastLoginAt != null && this.lastLoginAt.isAfter(start)) {
+			start = this.lastLoginAt;
+		}
+		if (this.lockedUntil != null && this.lockedUntil.isAfter(start)) {
+			start = this.lockedUntil;
+		}
+		return start;
+	}
+
+	/**
 	 * Counts a failed login and locks the account when the policy's limit is reached.
-	 * @param previousFailureAt when the previous failed login happened, if any
+	 * @param earlierFailures failed logins since {@link #failureWindowStart}, not counting this one
 	 * @return {@code true} if this failure locked the account
 	 */
-	public boolean registerFailedLogin(Instant now, Instant previousFailureAt, LoginLockPolicy policy) {
-		boolean lockExpired = this.lockedUntil != null && !now.isBefore(this.lockedUntil);
-		boolean streakBroken = previousFailureAt == null || previousFailureAt.isBefore(now.minus(policy.failureWindow()));
-		if (lockExpired || streakBroken) {
-			this.failedLoginCount = 0;
-			this.lockedUntil = null;
-			this.lockReason = null;
-		}
-		this.failedLoginCount++;
+	public boolean registerFailedLogin(Instant now, int earlierFailures, LoginLockPolicy policy) {
+		this.lockedUntil = null;
+		this.lockReason = null;
+		this.failedLoginCount = earlierFailures + 1;
 		this.updatedAt = now;
 		if (this.failedLoginCount >= policy.maxFailures()) {
 			this.lockedUntil = now.plus(policy.lockDuration());

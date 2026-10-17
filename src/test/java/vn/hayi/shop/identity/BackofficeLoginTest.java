@@ -59,7 +59,7 @@ class BackofficeLoginTest {
 		MockHttpServletResponse response = this.auth.login(this.email, IdentityFixtures.PASSWORD);
 
 		assertThat(response.getStatus()).isEqualTo(200);
-		assertThat(response.getContentAsString()).isEqualTo("{}");
+		assertThat(response.getContentAsString()).isEqualTo("{\"passwordChangeRequired\":false,\"changeToken\":null}");
 		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_at")).hasValueSatisfying(cookie -> assertThat(cookie)
 			.contains("Path=/api/backoffice", "Max-Age=600", "Secure", "HttpOnly", "SameSite=Lax"));
 		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_rt")).hasValueSatisfying(cookie -> assertThat(cookie)
@@ -136,6 +136,44 @@ class BackofficeLoginTest {
 		this.clock.advance(Duration.ofMinutes(16));
 
 		assertProblem(this.auth.login(this.email, "wrong again"), 401, "AUTH_INVALID_CREDENTIALS");
+	}
+
+	@Test
+	void failuresFourteenMinutesApartNeverLock() throws Exception {
+		this.fixtures.storeAdmin(this.email);
+		for (int attempt = 1; attempt <= 6; attempt++) {
+			assertProblem(this.auth.login(this.email, "wrong " + attempt), 401, "AUTH_INVALID_CREDENTIALS");
+			this.clock.advance(Duration.ofMinutes(14));
+		}
+	}
+
+	@Test
+	void fiveFailuresWithinTheLatestFifteenMinutesLock() throws Exception {
+		this.fixtures.storeAdmin(this.email);
+		this.auth.login(this.email, "early 1");
+		this.clock.advance(Duration.ofMinutes(10));
+		this.auth.login(this.email, "early 2");
+		this.clock.advance(Duration.ofMinutes(10));
+		for (int attempt = 1; attempt <= 3; attempt++) {
+			assertProblem(this.auth.login(this.email, "wrong " + attempt), 401, "AUTH_INVALID_CREDENTIALS");
+		}
+
+		assertProblem(this.auth.login(this.email, "wrong 4"), 429, "AUTH_LOGIN_LOCKED");
+	}
+
+	@Test
+	void accountWithoutBackofficeAccessRejectedLikeWrongPassword() throws Exception {
+		UUID userId = this.fixtures.withoutBackofficeAccess(this.email);
+		for (int attempt = 1; attempt <= 4; attempt++) {
+			this.auth.login(this.email, "wrong " + attempt);
+		}
+
+		MockHttpServletResponse response = this.auth.login(this.email, IdentityFixtures.PASSWORD);
+
+		assertProblem(response, 401, "AUTH_INVALID_CREDENTIALS");
+		assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+		assertThat(this.fixtures.securityEvents("LOGIN_SUCCESS", userId)).isZero();
+		assertProblem(this.auth.login(this.email, "wrong 5"), 429, "AUTH_LOGIN_LOCKED");
 	}
 
 	@Test

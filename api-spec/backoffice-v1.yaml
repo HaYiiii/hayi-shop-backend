@@ -22,10 +22,11 @@ paths:
       operationId: login
       summary: Log in with email and password
       description: |
-        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and returns an empty object.
-        A user with a temporary password gets `passwordChangeRequired` + `changeToken` instead and no cookie
-        (Decision K3). Wrong identifier or password → `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures
-        in 15 minutes → `429 AUTH_LOGIN_LOCKED` with `Retry-After` (Decision K2).
+        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and returns `passwordChangeRequired: false`.
+        A user with a temporary password gets `passwordChangeRequired: true` + `changeToken` instead and no cookie
+        (Decision K3). Wrong identifier or password, or an account without Backoffice access →
+        `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures within a sliding 15 minutes →
+        `429 AUTH_LOGIN_LOCKED` with `Retry-After` (Decision K2).
       security: []
       requestBody:
         required: true
@@ -42,7 +43,6 @@ paths:
               schema: { $ref: '#/components/schemas/LoginResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /auth/password/first-change:
     post:
@@ -160,13 +160,16 @@ components:
           maxLength: 1024
     LoginResponse:
       type: object
-      description: Empty when logged in; otherwise says which step must come first.
+      description: Says which step must come first (`passwordChangeRequired` is false once logged in).
+      required: [passwordChangeRequired, changeToken]
       properties:
         passwordChangeRequired:
           type: boolean
         changeToken:
-          type: string
-          description: Single-purpose token for `POST /auth/password/first-change`, valid 5 minutes.
+          type: [string, 'null']
+          description: |
+            Single-purpose token for `POST /auth/password/first-change`, valid 5 minutes; `null` when no
+            change is required.
     FirstPasswordChangeRequest:
       type: object
       required: [changeToken, newPassword]
