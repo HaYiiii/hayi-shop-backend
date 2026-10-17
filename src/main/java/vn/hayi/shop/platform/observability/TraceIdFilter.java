@@ -26,9 +26,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 class TraceIdFilter extends OncePerRequestFilter {
 
-	private static final Pattern TRACEPARENT = Pattern.compile("^[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$");
+	/** W3C Trace Context: {@code version-traceid-parentid-flags}; version {@code ff} is forbidden. */
+	private static final Pattern TRACEPARENT = Pattern.compile("^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$");
+
+	private static final String INVALID_VERSION = "ff";
 
 	private static final String INVALID_TRACE_ID = "0".repeat(32);
+
+	private static final String INVALID_PARENT_ID = "0".repeat(16);
 
 	private final SecureRandom random = new SecureRandom();
 
@@ -54,10 +59,11 @@ class TraceIdFilter extends OncePerRequestFilter {
 			return null;
 		}
 		Matcher matcher = TRACEPARENT.matcher(traceparent.trim());
-		if (!matcher.matches() || matcher.group(1).equals(INVALID_TRACE_ID)) {
+		if (!matcher.matches() || matcher.group(1).equals(INVALID_VERSION) || matcher.group(2).equals(INVALID_TRACE_ID)
+				|| matcher.group(3).equals(INVALID_PARENT_ID)) {
 			return null;
 		}
-		return matcher.group(1);
+		return matcher.group(2);
 	}
 
 	private String generate() {

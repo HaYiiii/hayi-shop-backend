@@ -8,6 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -37,11 +39,17 @@ class TraceAndHealthTest {
 			.andExpect(jsonPath("$.traceId").value(FRONTEND_TRACE_ID));
 	}
 
-	@Test
-	void invalidTraceparentIsIgnoredAndANewTraceIdIsGenerated() throws Exception {
-		mvc.perform(get("/api/backoffice/v1/orders")
-				.header("traceparent", "00-00000000000000000000000000000000-00f067aa0ba902b7-01"))
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"00-00000000000000000000000000000000-00f067aa0ba902b7-01", // all-zero trace-id
+			"00-" + FRONTEND_TRACE_ID + "-0000000000000000-01",         // all-zero parent-id
+			"ff-" + FRONTEND_TRACE_ID + "-00f067aa0ba902b7-01",         // forbidden version
+			"00-" + FRONTEND_TRACE_ID + "-00f067aa0ba902b7",            // missing flags
+			"garbage" })
+	void invalidTraceparentIsIgnoredAndANewTraceIdIsGenerated(String traceparent) throws Exception {
+		mvc.perform(get("/api/backoffice/v1/orders").header("traceparent", traceparent))
 			.andExpect(header().string("X-Trace-Id", matchesPattern("[0-9a-f]{32}")))
+			.andExpect(header().string("X-Trace-Id", not(FRONTEND_TRACE_ID)))
 			.andExpect(header().string("X-Trace-Id", not("00000000000000000000000000000000")));
 	}
 
