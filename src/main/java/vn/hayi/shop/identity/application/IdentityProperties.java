@@ -29,6 +29,11 @@ public record IdentityProperties(@DefaultValue Sessions backoffice, @DefaultValu
 	public record Login(@DefaultValue("5") int maxFailures, @DefaultValue("15m") Duration failureWindow,
 			@DefaultValue("15m") Duration lockDuration) {
 
+		/** Validated at binding, so a wrong configuration stops the application from starting. */
+		public Login {
+			new LoginLockPolicy(maxFailures, failureWindow, lockDuration);
+		}
+
 		public LoginLockPolicy lockPolicy() {
 			return new LoginLockPolicy(this.maxFailures, this.failureWindow, this.lockDuration);
 		}

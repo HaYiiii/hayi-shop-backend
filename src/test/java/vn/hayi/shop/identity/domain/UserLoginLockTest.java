@@ -1,6 +1,7 @@
 package vn.hayi.shop.identity.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -27,6 +28,13 @@ class UserLoginLockTest {
 		assertThat(user.isLocked(T0.plus(Duration.ofMinutes(14)))).isTrue();
 		assertThat(user.lockRemaining(T0.plus(Duration.ofMinutes(10)))).isEqualTo(Duration.ofMinutes(5));
 		assertThat(user.isLocked(T0.plus(Duration.ofMinutes(15)))).isFalse();
+	}
+
+	@Test
+	void lockShorterThanTheFailureWindowRefused() {
+		// Failures from before the lock would still be in the window once it ends, relocking after a single failure.
+		assertThatIllegalArgumentException()
+			.isThrownBy(() -> new LoginLockPolicy(5, Duration.ofMinutes(15), Duration.ofMinutes(5)));
 	}
 
 	@Test
