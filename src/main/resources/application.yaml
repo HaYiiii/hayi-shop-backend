@@ -18,6 +18,10 @@ spring:
     locations: classpath:db/migration
   jackson:
     time-zone: UTC
+  messages:
+    fallback-to-system-locale: false   # messages.properties (vi-VN) is the fallback, never the JVM locale
+  web:
+    locale: vi_VN                      # default when Accept-Language is absent (API README §6)
   docker:
     compose:
       lifecycle-management: start-only
@@ -36,6 +40,17 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState               # optional dependencies never fail liveness (Observability §19.5)
+        readiness:
+          include: readinessState,db           # can we safely serve traffic?
+          show-components: always              # component names + status only, never details
 
 hayi:
   operational-timezone: Asia/Ho_Chi_Minh
+
+logging:
+  structured:
+    format:
+      console: logstash   # JSON by default (Observability §19.2); MDC traceId becomes a top-level field

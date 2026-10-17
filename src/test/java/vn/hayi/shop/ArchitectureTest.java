@@ -19,6 +19,16 @@ class ArchitectureTest {
 		.should().dependOnClassesThat().resideInAnyPackage("org.springframework.web..", "vn.hayi.shop.platform..", "..web..", "..application..", "..infrastructure..")
 		.allowEmptyShould(true);
 
+	/**
+	 * The shared kernel is plain Java: domain code depends on it, so it must not drag in Spring, servlet or platform.
+	 * {@code package-info} only carries the Modulith module declaration.
+	 */
+	@ArchTest
+	static final ArchRule sharedKernelIsFrameworkFree = noClasses()
+		.that().resideInAPackage("vn.hayi.shop.shared..")
+		.and().doNotHaveSimpleName("package-info")
+		.should().dependOnClassesThat().resideInAnyPackage("org.springframework..", "jakarta.servlet..", "vn.hayi.shop.platform..");
+
 	@ArchTest
 	static final ArchRule onlyWebLayerUsesWebAnnotations = noClasses()
 		.that().resideOutsideOfPackages("..web..", "vn.hayi.shop.platform..")
