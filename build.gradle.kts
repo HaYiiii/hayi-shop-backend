@@ -41,6 +41,7 @@ dependencies {
 	implementation(libs.shedlock.spring)
 	implementation(libs.shedlock.jdbc)
 	implementation(libs.bouncycastle.prov)
+	implementation("com.github.ben-manes.caffeine:caffeine") // version from the Boot BOM
 
 	runtimeOnly("com.mysql:mysql-connector-j")
 	runtimeOnly("org.springframework.modulith:spring-modulith-actuator")
