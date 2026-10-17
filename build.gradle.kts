@@ -108,6 +108,12 @@ tasks.withType<JavaCompile> {
 	options.compilerArgs.add("-parameters")
 }
 
+// Local dev only: a throw-away JWT signing key, so sessions end on restart. Real environments set
+// HAYI_SECURITY_SIGNING_KEY (API 01-security §4).
+tasks.bootRun {
+	systemProperty("hayi.security.allow-ephemeral-key", "true")
+}
+
 tasks.withType<Test> {
 	useJUnitPlatform()
 }
