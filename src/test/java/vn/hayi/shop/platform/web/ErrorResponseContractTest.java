@@ -176,6 +176,48 @@ class ErrorResponseContractTest {
 		assertThat(errorLine.path("traceId").asString()).isEqualTo(traceId);
 	}
 
+	@Test
+	@WithMockUser
+	void frameworkServerErrorGets500InternalErrorAndIsLoggedWithTraceId(CapturedOutput output) throws Exception {
+		String traceId = mvc.perform(get(PROBE + "/missing-path-variable"))
+			.andExpect(status().isInternalServerError())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+			.andReturn().getResponse().getHeader("X-Trace-Id");
+
+		JsonNode errorLine = output.getOut().lines()
+			.filter(line -> line.startsWith("{") && line.contains("/missing-path-variable"))
+			.map(JSON::readTree)
+			.filter(line -> line.path("level").asString().equals("ERROR"))
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("no ERROR log line for the framework failure"));
+		assertThat(errorLine.path("traceId").asString()).isEqualTo(traceId);
+	}
+
+	@Test
+	void titleAndDetailAreVietnameseWhenNoLanguageIsRequested() throws Exception {
+		mvc.perform(get("/api/backoffice/v1/orders"))
+			.andExpect(jsonPath("$.title").value("Cần đăng nhập"))
+			.andExpect(jsonPath("$.detail").value("Bạn cần đăng nhập để thực hiện thao tác này."));
+	}
+
+	@Test
+	void titleAndDetailAreEnglishWhenRequested() throws Exception {
+		mvc.perform(get("/api/backoffice/v1/orders").header("Accept-Language", "en-US"))
+			.andExpect(jsonPath("$.title").value("Authentication required"))
+			.andExpect(jsonPath("$.detail").value("You need to sign in to perform this action."));
+	}
+
+	@Test
+	@WithMockUser
+	void frameworkErrorsAreLocalizedToo() throws Exception {
+		mvc.perform(post(PROBE + "/needs-permission"))
+			.andExpect(status().isMethodNotAllowed())
+			.andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
+			.andExpect(jsonPath("$.title").value("Phương thức không được hỗ trợ"))
+			.andExpect(jsonPath("$.detail").isNotEmpty());
+	}
+
 	private static void assertTraceIdInBodyMatchesHeader(MvcResult result) throws Exception {
 		jsonPath("$.traceId").value(result.getResponse().getHeader("X-Trace-Id")).match(result);
 	}
@@ -193,6 +235,11 @@ class ErrorResponseContractTest {
 		@GetMapping("/domain-error/{code}")
 		void domainError(@PathVariable ProbeErrorCode code) {
 			throw new DomainException(code, "probe " + code);
+		}
+
+		/** Path variable missing from the template: Spring raises a 500 MissingPathVariableException. */
+		@GetMapping("/missing-path-variable")
+		void missingPathVariable(@PathVariable String id) {
 		}
 
 		@GetMapping("/boom")

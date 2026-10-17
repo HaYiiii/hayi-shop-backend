@@ -66,7 +66,7 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	/** Last resort: full detail goes to the server log (with traceId), never to the client. */
 	@ExceptionHandler(Exception.class)
 	ResponseEntity<ProblemDetail> handleUnexpected(Exception ex, HttpServletRequest request) {
-		LOG.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
+		logUnexpected(ex, request);
 		return respond(CommonErrorCode.INTERNAL_ERROR, request);
 	}
 
@@ -82,15 +82,33 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	/**
 	 * Every other Spring MVC error (malformed JSON, missing parameter, unknown route, wrong method…) gets a fresh
 	 * problem in our shape, so framework/parser wording never reaches the client. Request-shape errors (400) are
-	 * {@code VALIDATION_FAILED}; the rest use the status name as code (e.g. {@code METHOD_NOT_ALLOWED}).
+	 * {@code VALIDATION_FAILED}; server-side failures (5xx except 503) are logged and become {@code INTERNAL_ERROR};
+	 * the rest use the status name as code (e.g. {@code METHOD_NOT_ALLOWED}, {@code SERVICE_UNAVAILABLE}).
 	 */
 	@Override
 	protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body, HttpHeaders headers,
 			HttpStatusCode statusCode, WebRequest request) {
+		HttpServletRequest servletRequest = ((ServletWebRequest) request).getRequest();
 		HttpStatus status = HttpStatus.valueOf(statusCode.value());
-		String code = (status == HttpStatus.BAD_REQUEST) ? CommonErrorCode.VALIDATION_FAILED.name() : status.name();
-		ProblemDetail problem = this.problems.create(status, code, ((ServletWebRequest) request).getRequest());
+		if (status.is5xxServerError()) {
+			logUnexpected(ex, servletRequest);
+		}
+		ProblemDetail problem = this.problems.create(status, frameworkCode(status), servletRequest);
 		return ResponseEntity.status(status).headers(headers).body(problem);
+	}
+
+	private static String frameworkCode(HttpStatus status) {
+		if (status == HttpStatus.BAD_REQUEST) {
+			return CommonErrorCode.VALIDATION_FAILED.name();
+		}
+		if (status.is5xxServerError() && status != HttpStatus.SERVICE_UNAVAILABLE) {
+			return CommonErrorCode.INTERNAL_ERROR.name();
+		}
+		return status.name();
+	}
+
+	private static void logUnexpected(Exception ex, HttpServletRequest request) {
+		LOG.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
 	}
 
 	private ResponseEntity<ProblemDetail> respond(ErrorCode code, HttpServletRequest request, Object... detailArgs) {

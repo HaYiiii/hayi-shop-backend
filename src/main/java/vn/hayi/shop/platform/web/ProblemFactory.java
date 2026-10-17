@@ -3,7 +3,6 @@ package vn.hayi.shop.platform.web;
 import java.net.URI;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -17,7 +16,6 @@ import org.springframework.web.servlet.LocaleResolver;
 import vn.hayi.shop.platform.observability.TraceIds;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.ErrorCode;
-import vn.hayi.shop.shared.error.ErrorKind;
 
 /**
  * Builds RFC 9457 Problem Details in the HaYi shape (API README §6): stable {@code code}, {@code traceId},
@@ -28,15 +26,6 @@ class ProblemFactory {
 
 	static final String TYPE_PREFIX = "https://docs.hayi.vn/errors/";
 
-	private static final Map<ErrorKind, HttpStatus> STATUS_BY_KIND = Map.of(
-			ErrorKind.VALIDATION, HttpStatus.BAD_REQUEST,
-			ErrorKind.UNAUTHENTICATED, HttpStatus.UNAUTHORIZED,
-			ErrorKind.FORBIDDEN, HttpStatus.FORBIDDEN,
-			ErrorKind.NOT_FOUND, HttpStatus.NOT_FOUND,
-			ErrorKind.CONFLICT, HttpStatus.CONFLICT,
-			ErrorKind.BUSINESS_RULE, HttpStatus.UNPROCESSABLE_CONTENT,
-			ErrorKind.INTERNAL, HttpStatus.INTERNAL_SERVER_ERROR);
-
 	private final MessageSource messages;
 
 	private final LocaleResolver localeResolver;
@@ -46,8 +35,17 @@ class ProblemFactory {
 		this.localeResolver = localeResolver;
 	}
 
+	/** Exhaustive on purpose: a new {@link ErrorKind} does not compile until it has a status (API README §6). */
 	HttpStatus statusOf(ErrorCode code) {
-		return STATUS_BY_KIND.get(code.kind());
+		return switch (code.kind()) {
+			case VALIDATION -> HttpStatus.BAD_REQUEST;
+			case UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
+			case FORBIDDEN -> HttpStatus.FORBIDDEN;
+			case NOT_FOUND -> HttpStatus.NOT_FOUND;
+			case CONFLICT -> HttpStatus.CONFLICT;
+			case BUSINESS_RULE -> HttpStatus.UNPROCESSABLE_CONTENT;
+			case INTERNAL -> HttpStatus.INTERNAL_SERVER_ERROR;
+		};
 	}
 
 	ProblemDetail create(ErrorCode code, HttpServletRequest request, Object... detailArgs) {
@@ -59,11 +57,18 @@ class ProblemFactory {
 		Locale locale = this.localeResolver.resolveLocale(request);
 		ProblemDetail problem = ProblemDetail.forStatus(status);
 		problem.setType(URI.create(TYPE_PREFIX + code));
-		problem.setTitle(this.messages.getMessage("error." + code + ".title", null, status.getReasonPhrase(), locale));
-		problem.setDetail(this.messages.getMessage("error." + code + ".detail", detailArgs, null, locale));
+		problem.setTitle(message("error." + code + ".title", null, locale));
+		problem.setDetail(message("error." + code + ".detail", detailArgs, locale));
 		problem.setProperty("code", code);
 		decorate(problem);
 		return problem;
+	}
+
+	/** Falls back to the generic {@code error.default.*} text, so the client always gets its language. */
+	private String message(String key, Object[] args, Locale locale) {
+		String fallbackKey = "error.default" + key.substring(key.lastIndexOf('.'));
+		String fallback = this.messages.getMessage(fallbackKey, null, null, locale);
+		return this.messages.getMessage(key, args, fallback, locale);
 	}
 
 	/** {@code errors[]} entries for field validation (API README §6); messages localized like title/detail. */
