@@ -25,6 +25,8 @@ Chạy với Testcontainers thay vì compose: chạy `TestHayiShopApplication` (
 - **Owner bootstrap** (Decision K1): trên môi trường mới, khởi động app một lần với
   `HAYI_BOOTSTRAP_OWNER_EMAIL` + `HAYI_BOOTSTRAP_OWNER_PASSWORD` (mật khẩu tạm, ≥ 12 ký tự). App tạo OWNER,
   bắt đổi mật khẩu ở lần đăng nhập đầu; đã có OWNER thì bỏ qua. Xóa hai biến sau khi xong.
+  Nếu chưa có OWNER mà email đã thuộc một user khác, app **dừng khởi động** (`IllegalStateException`
+  "Owner bootstrap email already belongs to a user"), không gắn OWNER cho user có sẵn: dùng email khác.
 - **Khóa ký JWT**: `HAYI_SECURITY_SIGNING_KEY` = JWK riêng tư P-256 (JSON, có `kid`). `./gradlew bootRun` và test dùng
   khóa tạm sinh lúc khởi động (`hayi.security.allow-ephemeral-key=true`), nên phiên mất khi restart.
 

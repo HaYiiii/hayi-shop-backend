@@ -1,6 +1,7 @@
 package vn.hayi.shop.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static vn.hayi.shop.identity.BackofficeLoginTest.assertProblem;
 
 import java.util.Map;
@@ -41,6 +42,9 @@ class OwnerBootstrapTest {
 	@Autowired
 	JdbcClient jdbc;
 
+	@Autowired
+	IdentityFixtures fixtures;
+
 	BackofficeAuth auth;
 
 	@BeforeEach
@@ -72,6 +76,17 @@ class OwnerBootstrapTest {
 
 		assertThat(ownerCount()).isEqualTo(1);
 		assertProblem(this.auth.login(secondEmail, TEMPORARY_PASSWORD), 401, "AUTH_INVALID_CREDENTIALS");
+	}
+
+	@Test
+	void bootstrapRefusesEmailOfAnExistingUser() {
+		String email = IdentityFixtures.uniqueEmail();
+		this.fixtures.storeAdmin(email);
+
+		assertThatThrownBy(() -> this.bootstrap.bootstrap(email, TEMPORARY_PASSWORD))
+			.isInstanceOf(IllegalStateException.class);
+
+		assertThat(ownerCount()).isZero();
 	}
 
 	@Test
