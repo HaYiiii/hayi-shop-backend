@@ -85,8 +85,7 @@ class BackofficeAuthController implements AuthApi {
 
 	@Override
 	public ResponseEntity<Void> logout(String refreshToken, String csrfHeader) {
-		UUID currentSession = AuthenticatedSession.current().map(AuthenticatedSession::sessionId).orElse(null);
-		if (!this.sessions.logout(refreshToken, currentSession, csrfSession(), client())) {
+		if (!this.sessions.logout(refreshToken, csrfSession(), client())) {
 			throw new DomainException(CommonErrorCode.CSRF_INVALID, "CSRF token of another session");
 		}
 		return ResponseEntity.noContent().headers(setCookies(this.cookies.cleared(Surface.BACKOFFICE))).build();

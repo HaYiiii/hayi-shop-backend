@@ -95,16 +95,19 @@ public class SessionService {
 	}
 
 	/**
-	 * Revokes the session of {@code refreshToken}, or else the caller's current session. Idempotent.
+	 * Revokes the session of {@code refreshToken}, or else the session the verified CSRF token was minted for (the
+	 * access cookie is not read on auth endpoints, and the refresh cookie may be gone). Idempotent.
 	 * @return {@code false} when the CSRF token belongs to another session
 	 */
 	@Transactional
-	public boolean logout(String refreshToken, UUID currentSessionId, UUID csrfSessionId, ClientInfo client) {
-		Optional<UUID> sessionId = find(refreshToken).map(RefreshToken::getSessionId).or(() -> Optional.ofNullable(currentSessionId));
-		if (sessionId.isEmpty()) {
+	public boolean logout(String refreshToken, UUID csrfSessionId, ClientInfo client) {
+		Optional<UserSession> found = find(refreshToken).map(RefreshToken::getSessionId)
+			.or(() -> Optional.ofNullable(csrfSessionId))
+			.flatMap(this.sessions::findByIdForUpdate);
+		if (found.isEmpty()) {
 			return true;
 		}
-		UserSession session = this.sessions.findByIdForUpdate(sessionId.get()).orElseThrow();
+		UserSession session = found.get();
 		if (!session.getId().equals(csrfSessionId)) {
 			this.securityEvents.csrfValidationFailed(session.getUserId(), session.getId(), client);
 			return false;

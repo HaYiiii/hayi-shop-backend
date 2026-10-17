@@ -136,6 +136,16 @@ class BackofficeSessionTest {
 	}
 
 	@Test
+	void logoutWithOnlyTheAccessCookieStillRevokesTheSession() throws Exception {
+		Session session = login();
+
+		assertThat(this.auth.logout(new Session(session.access(), null, session.csrf())).getStatus()).isEqualTo(204);
+
+		assertProblem(this.auth.csrf(session), 401, "AUTH_SESSION_REVOKED");
+		assertProblem(this.auth.refresh(session), 401, "AUTH_SESSION_REVOKED");
+	}
+
+	@Test
 	void logoutKeepsOtherSessionsOfTheUser() throws Exception {
 		Session laptop = login();
 		Session counter = login();
