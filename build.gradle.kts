@@ -110,9 +110,11 @@ tasks.withType<JavaCompile> {
 }
 
 // Local dev only: a throw-away JWT signing key, so sessions end on restart. Real environments set
-// HAYI_SECURITY_SIGNING_KEY (API 01-security §4).
+// HAYI_SECURITY_SIGNING_KEY (API 01-security §4) and HAYI_SECURITY_MFA_ENCRYPTION_KEY (Decision L3). The MFA key below
+// is a fixed, public dev value so enrolled TOTP secrets survive a restart; never use it anywhere else.
 tasks.bootRun {
 	systemProperty("hayi.security.allow-ephemeral-key", "true")
+	systemProperty("hayi.security.mfa-encryption-key", "ZGV2LW9ubHktbWZhLWtleS1ub3QtYS1zZWNyZXQhISE=")
 }
 
 tasks.withType<Test> {
