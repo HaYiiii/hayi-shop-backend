@@ -35,6 +35,14 @@ class ArchitectureTest {
 		.should().dependOnClassesThat().resideInAPackage("org.springframework.web.bind.annotation..")
 		.allowEmptyShould(true);
 
+	/** Controllers go through their own module's {@code application} layer only. */
+	@ArchTest
+	static final ArchRule webDependsOnlyOnApplication = noClasses()
+		.that().resideInAPackage("..web..")
+		.and().resideOutsideOfPackage("vn.hayi.shop.platform..")
+		.should().dependOnClassesThat().resideInAnyPackage("vn.hayi.shop.*.domain..", "vn.hayi.shop.*.infrastructure..")
+		.allowEmptyShould(true);
+
 	@ArchTest
 	static final ArchRule applicationDoesNotDependOnWeb = noClasses()
 		.that().resideInAPackage("..application..")

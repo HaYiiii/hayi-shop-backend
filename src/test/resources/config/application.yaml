@@ -1,0 +1,4 @@
+# Test-only overrides (classpath:/config/ wins over classpath:/application.yaml).
+hayi:
+  security:
+    allow-ephemeral-key: true   # tests never use a real signing key
