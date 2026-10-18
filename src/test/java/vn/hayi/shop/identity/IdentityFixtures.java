@@ -8,25 +8,33 @@ import org.springframework.boot.test.context.TestComponent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import vn.hayi.shop.identity.infrastructure.MfaSecretCipher;
 import vn.hayi.shop.platform.persistence.UuidBinary;
 import vn.hayi.shop.shared.id.UuidV7;
 
 /**
  * Creates Backoffice users straight in the {@code iam_*} tables, so login/session tests do not depend on a
- * provisioning flow that does not exist yet. Users get role ADMIN (STORE scope), leaving OWNER to the bootstrap.
+ * provisioning flow that does not exist yet. Users get role ADMIN (STORE scope), leaving OWNER to the bootstrap, and
+ * an active TOTP factor with {@link #TOTP_SECRET} unless created without MFA.
  */
 @TestComponent
 class IdentityFixtures {
 
 	static final String PASSWORD = "correct horse battery staple";
 
+	/** Base32 TOTP secret of every fixture user with MFA, as their authenticator app holds it. */
+	static final String TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+
 	private final JdbcClient jdbc;
 
 	private final PasswordEncoder passwordEncoder;
 
-	IdentityFixtures(JdbcClient jdbc, PasswordEncoder passwordEncoder) {
+	private final MfaSecretCipher cipher;
+
+	IdentityFixtures(JdbcClient jdbc, PasswordEncoder passwordEncoder, MfaSecretCipher cipher) {
 		this.jdbc = jdbc;
 		this.passwordEncoder = passwordEncoder;
+		this.cipher = cipher;
 	}
 
 	/** A unique email, so tests sharing the database never see each other's users. */
@@ -39,6 +47,22 @@ class IdentityFixtures {
 	}
 
 	UUID storeAdmin(String email, String password, boolean mustChangePassword) {
+		UUID userId = storeAdminWithoutMfa(email, password, mustChangePassword);
+		Instant now = Instant.now();
+		this.jdbc.sql("""
+				INSERT INTO iam_mfa_factor (id, user_id, factor_type, secret_encrypted, status, activated_at, created_at, updated_at)
+				VALUES (?, ?, 'TOTP', ?, 'ACTIVE', ?, ?, ?)
+				""").params(id(UuidV7.generate()), id(userId),
+					this.cipher.encrypt(userId, BackofficeAuth.base32Decode(TOTP_SECRET)), now, now, now).update();
+		return userId;
+	}
+
+	/** An ADMIN who has not enrolled MFA yet, e.g. right after provisioning. */
+	UUID storeAdminWithoutMfa(String email) {
+		return storeAdminWithoutMfa(email, PASSWORD, false);
+	}
+
+	private UUID storeAdminWithoutMfa(String email, String password, boolean mustChangePassword) {
 		UUID userId = userWithoutRole(email, password, mustChangePassword);
 		this.jdbc.sql("""
 				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
@@ -66,6 +90,11 @@ class IdentityFixtures {
 				VALUES (?, ?, ?, ?, ?)
 				""").params(id(userId), this.passwordEncoder.encode(password), mustChangePassword, now, now).update();
 		return userId;
+	}
+
+	/** Turns the user's MFA off, like a Manager who never enabled it (Decision D4). */
+	void disableMfa(UUID userId) {
+		this.jdbc.sql("UPDATE iam_mfa_factor SET status = 'DISABLED' WHERE user_id = ?").param(id(userId)).update();
 	}
 
 	/** Revokes the user's sessions straight in the database, as another instance would. */

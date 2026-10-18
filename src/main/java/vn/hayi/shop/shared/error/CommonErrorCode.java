@@ -11,6 +11,7 @@ public enum CommonErrorCode implements ErrorCode {
 	AUTH_SESSION_REVOKED(ErrorKind.UNAUTHENTICATED),
 	PERMISSION_DENIED(ErrorKind.FORBIDDEN),
 	CSRF_INVALID(ErrorKind.FORBIDDEN),
+	STEP_UP_REQUIRED(ErrorKind.FORBIDDEN),
 	INTERNAL_ERROR(ErrorKind.INTERNAL);
 
 	private final ErrorKind kind;

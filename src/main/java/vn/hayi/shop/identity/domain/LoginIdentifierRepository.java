@@ -11,4 +11,6 @@ public interface LoginIdentifierRepository extends Repository<LoginIdentifier, U
 
 	Optional<LoginIdentifier> findByTypeAndNormalizedValue(IdentifierType type, String normalizedValue);
 
+	Optional<LoginIdentifier> findByUserIdAndType(UUID userId, IdentifierType type);
+
 }

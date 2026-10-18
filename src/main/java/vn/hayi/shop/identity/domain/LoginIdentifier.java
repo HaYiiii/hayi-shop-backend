@@ -64,4 +64,8 @@ public class LoginIdentifier {
 		return this.userId;
 	}
 
+	public String getNormalizedValue() {
+		return this.normalizedValue;
+	}
+
 }

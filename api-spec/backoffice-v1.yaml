@@ -12,7 +12,7 @@ servers:
   - url: /api/backoffice/v1
 tags:
   - name: Auth
-    description: Backoffice login, session and CSRF (API 01-security §5–6, Decision K)
+    description: Backoffice login, MFA, step-up, session and CSRF (API 01-security §5–6, §8, Decision K, L)
 security:
   - accessCookie: []
 paths:
@@ -22,9 +22,12 @@ paths:
       operationId: login
       summary: Log in with email and password
       description: |
-        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and returns `passwordChangeRequired: false`.
-        A user with a temporary password gets `passwordChangeRequired: true` + `changeToken` instead and no cookie
-        (Decision K3). Wrong identifier or password, or an account without Backoffice access →
+        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and every flag of the response is false.
+        Otherwise exactly one step comes first, and no cookie is set:
+        a temporary password → `passwordChangeRequired` + `changeToken` (Decision K3); an active MFA factor →
+        `mfaRequired` + `mfaChallengeId` (`POST /auth/mfa/verify`); a STORE role without MFA →
+        `mfaEnrollmentRequired` + `enrollmentToken` (`POST /auth/mfa/enroll`, Decision D4, L6).
+        Wrong identifier or password, or an account without Backoffice access →
         `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures within a sliding 15 minutes →
         `429 AUTH_LOGIN_LOCKED` with `Retry-After` (Decision K2).
       security: []
@@ -65,6 +68,100 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/BusinessRuleViolated' }
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyMfa
+      summary: Complete login with a TOTP or recovery code
+      description: |
+        Answers the challenge from login (TTL 5 minutes) with a 6-digit TOTP code or an unused recovery code, then
+        sets the session cookies. Wrong code → `401 MFA_CODE_INVALID`; the 5th wrong code locks the challenge →
+        `401 MFA_CHALLENGE_LOCKED` and the user logs in again. Unknown, expired or used challenge →
+        `401 AUTH_REQUIRED` (Decision L1). MFA failures do not count towards the login lock.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MfaVerifyRequest' }
+      responses:
+        '204':
+          description: Logged in.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/mfa/enroll:
+    post:
+      tags: [Auth]
+      operationId: startMfaEnrollment
+      summary: Start TOTP enrollment
+      description: |
+        Uses the `enrollmentToken` from login (TTL 10 minutes, Decision L2) and returns a new TOTP secret as an
+        `otpauth://` URI (the UI draws the QR code) and as base32 for manual entry (Decision L4). Calling it again
+        replaces the pending secret. Invalid token or MFA already enabled → `401 AUTH_REQUIRED`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MfaEnrollmentRequest' }
+      responses:
+        '200':
+          description: Pending TOTP secret.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MfaEnrollmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/mfa/enroll/confirm:
+    post:
+      tags: [Auth]
+      operationId: confirmMfaEnrollment
+      summary: Confirm TOTP enrollment with a first code
+      description: |
+        Activates the pending factor when the code matches, returns 10 single-use recovery codes — shown this one
+        time only — and sets the session cookies (Decision L5). Wrong code → `401 MFA_CODE_INVALID`; invalid token
+        or nothing pending → `401 AUTH_REQUIRED`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MfaEnrollmentConfirmRequest' }
+      responses:
+        '200':
+          description: MFA enabled and logged in.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MfaEnrollmentConfirmResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/step-up:
+    post:
+      tags: [Auth]
+      operationId: stepUp
+      summary: Re-authenticate the current session for sensitive actions
+      description: |
+        With MFA: `code` (TOTP); without MFA: `password`. Sets the session's `stepUpVerifiedAt`, so actions marked
+        **S** are allowed for 5 minutes (API 01-security §8, Decision L7); they answer `403 STEP_UP_REQUIRED`
+        otherwise. Wrong code → `401 MFA_CODE_INVALID`, wrong password → `401 AUTH_INVALID_CREDENTIALS`; the 5th
+        failure within 15 minutes revokes the session → `401 AUTH_SESSION_REVOKED`. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StepUpRequest' }
+      responses:
+        '204':
+          description: Session re-authenticated.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /auth/refresh:
     post:
       tags: [Auth]
@@ -160,8 +257,8 @@ components:
           maxLength: 1024
     LoginResponse:
       type: object
-      description: Says which step must come first (`passwordChangeRequired` is false once logged in).
-      required: [passwordChangeRequired, changeToken]
+      description: Says which step must come first; every flag is false once logged in.
+      required: [passwordChangeRequired, changeToken, mfaRequired, mfaChallengeId, mfaEnrollmentRequired, enrollmentToken]
       properties:
         passwordChangeRequired:
           type: boolean
@@ -170,6 +267,80 @@ components:
           description: |
             Single-purpose token for `POST /auth/password/first-change`, valid 5 minutes; `null` when no
             change is required.
+        mfaRequired:
+          type: boolean
+        mfaChallengeId:
+          type: [string, 'null']
+          format: uuid
+          description: Challenge for `POST /auth/mfa/verify`, valid 5 minutes; `null` unless `mfaRequired`.
+        mfaEnrollmentRequired:
+          type: boolean
+        enrollmentToken:
+          type: [string, 'null']
+          description: |
+            Single-purpose token for `POST /auth/mfa/enroll` and `/auth/mfa/enroll/confirm`, valid 10 minutes;
+            `null` unless `mfaEnrollmentRequired`.
+    MfaVerifyRequest:
+      type: object
+      required: [mfaChallengeId, code]
+      properties:
+        mfaChallengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: 6-digit TOTP code or a recovery code (`XXXXX-XXXXX`, case and dash ignored).
+    MfaEnrollmentRequest:
+      type: object
+      required: [enrollmentToken]
+      properties:
+        enrollmentToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
+    MfaEnrollmentResponse:
+      type: object
+      required: [otpauthUri, secret]
+      properties:
+        otpauthUri:
+          type: string
+          description: '`otpauth://totp/...` for the authenticator app; the UI renders it as a QR code.'
+        secret:
+          type: string
+          description: The same TOTP secret in base32, for manual entry.
+    MfaEnrollmentConfirmRequest:
+      type: object
+      required: [enrollmentToken, code]
+      properties:
+        enrollmentToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        code:
+          type: string
+          minLength: 1
+          maxLength: 32
+    MfaEnrollmentConfirmResponse:
+      type: object
+      required: [recoveryCodes]
+      properties:
+        recoveryCodes:
+          type: array
+          description: 10 single-use recovery codes, returned this one time only.
+          items:
+            type: string
+    StepUpRequest:
+      type: object
+      description: '`code` when the user has MFA, `password` otherwise.'
+      properties:
+        code:
+          type: [string, 'null']
+          maxLength: 32
+        password:
+          type: [string, 'null']
+          maxLength: 1024
     FirstPasswordChangeRequest:
       type: object
       required: [changeToken, newPassword]
@@ -189,7 +360,9 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
-      description: '`AUTH_REQUIRED`, `AUTH_TOKEN_EXPIRED`, `AUTH_SESSION_REVOKED`, `AUTH_INVALID_CREDENTIALS`'
+      description: |
+        `AUTH_REQUIRED`, `AUTH_TOKEN_EXPIRED`, `AUTH_SESSION_REVOKED`, `AUTH_INVALID_CREDENTIALS`, `MFA_CODE_INVALID`,
+        `MFA_CHALLENGE_LOCKED`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

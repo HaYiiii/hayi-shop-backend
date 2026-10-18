@@ -6,6 +6,7 @@ import static vn.hayi.shop.identity.BackofficeLoginTest.assertProblem;
 
 import java.util.Map;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.jayway.jsonpath.JsonPath;
+import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
 import vn.hayi.shop.identity.application.OwnerBootstrapService;
@@ -40,6 +42,9 @@ class OwnerBootstrapTest {
 	MockMvc mvc;
 
 	@Autowired
+	MutableClock clock;
+
+	@Autowired
 	JdbcClient jdbc;
 
 	@Autowired
@@ -47,14 +52,19 @@ class OwnerBootstrapTest {
 
 	BackofficeAuth auth;
 
+	@AfterEach
+	void resetClock() {
+		this.clock.reset();
+	}
+
 	@BeforeEach
 	void newEnvironmentWithoutOwner() {
-		this.auth = new BackofficeAuth(this.mvc);
+		this.auth = new BackofficeAuth(this.mvc, this.clock);
 		this.jdbc.sql("DELETE FROM iam_user_store_role WHERE role_id = (SELECT id FROM iam_role WHERE code = 'OWNER')").update();
 	}
 
 	@Test
-	void bootstrappedOwnerChangesTemporaryPasswordThenLogsIn() throws Exception {
+	void bootstrappedOwnerChangesTemporaryPasswordEnrollsMfaThenLogsIn() throws Exception {
 		String email = IdentityFixtures.uniqueEmail();
 
 		assertThat(this.bootstrap.bootstrap(email, TEMPORARY_PASSWORD)).isEqualTo(Outcome.CREATED);
@@ -63,7 +73,15 @@ class OwnerBootstrapTest {
 		assertThat(JsonPath.<Boolean>read(first.getContentAsString(), "$.passwordChangeRequired")).isTrue();
 		String changeToken = JsonPath.read(first.getContentAsString(), "$.changeToken");
 		assertThat(this.auth.changeFirstPassword(changeToken, "the owner's own passphrase").getStatus()).isEqualTo(204);
-		assertThat(this.auth.loginSession(email, "the owner's own passphrase").access()).isNotBlank();
+
+		MockHttpServletResponse second = this.auth.login(email, "the owner's own passphrase");
+		assertThat(second.getHeaders("Set-Cookie")).isEmpty();
+		String enrollmentToken = JsonPath.read(second.getContentAsString(), "$.enrollmentToken");
+		String secret = JsonPath.read(this.auth.startEnrollment(enrollmentToken).getContentAsString(), "$.secret");
+		MockHttpServletResponse enrolled = this.auth.confirmEnrollment(enrollmentToken,
+				BackofficeAuth.totp(secret, this.clock.instant()));
+		assertThat(enrolled.getStatus()).as(enrolled.getContentAsString()).isEqualTo(200);
+		assertThat(enrolled.getCookie("hy_b_at")).isNotNull();
 	}
 
 	@Test

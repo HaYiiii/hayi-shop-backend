@@ -77,4 +77,15 @@ public class SecurityEventLog implements SecurityEventSink {
 		record(SecurityEventType.CSRF_VALIDATION_FAILED, userId, sessionId, client);
 	}
 
+	/** Failed step-ups of the user's session after {@code since} (Decision L7); the user narrows it to the index. */
+	public int countStepUpFailures(UUID userId, UUID sessionId, Instant since) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM iam_security_event
+				WHERE user_id = ? AND occurred_at > ? AND session_id = ? AND event_type = 'MFA_FAILED'
+				""")
+			.params(toBytes(userId), since, toBytes(sessionId))
+			.query(Integer.class)
+			.single();
+	}
+
 }

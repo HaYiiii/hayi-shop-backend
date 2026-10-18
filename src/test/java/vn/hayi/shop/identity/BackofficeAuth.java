@@ -3,6 +3,8 @@ package vn.hayi.shop.identity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -14,15 +16,25 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
-/** Drives the Backoffice auth endpoints over HTTP like the browser does: cookies in, cookies out. */
+import com.jayway.jsonpath.JsonPath;
+import vn.hayi.shop.MutableClock;
+import vn.hayi.shop.identity.domain.Totp;
+
+/**
+ * Drives the Backoffice auth endpoints over HTTP like the browser does: cookies in, cookies out. The authenticator
+ * app is simulated from the fixture's TOTP secret and the test clock.
+ */
 final class BackofficeAuth {
 
 	static final String AUTH = "/api/backoffice/v1/auth";
 
 	private final MockMvc mvc;
 
-	BackofficeAuth(MockMvc mvc) {
+	private final MutableClock clock;
+
+	BackofficeAuth(MockMvc mvc, MutableClock clock) {
 		this.mvc = mvc;
+		this.clock = clock;
 	}
 
 	MockHttpServletResponse login(String identifier, String password) throws Exception {
@@ -33,13 +45,76 @@ final class BackofficeAuth {
 			.andReturn().getResponse();
 	}
 
-	/** Logs in and returns the browser's cookie jar. */
+	/**
+	 * Logs in, answering the MFA challenge with the fixture's authenticator, and returns the browser's cookie jar.
+	 * The clock first moves to the next TOTP step, since a step is accepted once per factor.
+	 */
 	Session loginSession(String identifier, String password) throws Exception {
 		MockHttpServletResponse response = login(identifier, password);
-		if (response.getStatus() != 200 || response.getCookie("hy_b_at") == null) {
+		if (response.getStatus() == 200 && JsonPath.<Boolean>read(response.getContentAsString(), "$.mfaRequired")) {
+			this.clock.advance(Duration.ofSeconds(30));
+			response = verifyMfa(JsonPath.read(response.getContentAsString(), "$.mfaChallengeId"),
+					totp(IdentityFixtures.TOTP_SECRET, this.clock.instant()));
+		}
+		if (response.getStatus() / 100 != 2 || response.getCookie("hy_b_at") == null) {
 			throw new AssertionError("login failed: " + response.getStatus() + " " + response.getContentAsString());
 		}
 		return Session.from(response);
+	}
+
+	MockHttpServletResponse verifyMfa(String challengeId, String code) throws Exception {
+		return postJson("/mfa/verify", """
+				{"mfaChallengeId": "%s", "code": "%s"}
+				""".formatted(challengeId, code));
+	}
+
+	MockHttpServletResponse startEnrollment(String enrollmentToken) throws Exception {
+		return postJson("/mfa/enroll", """
+				{"enrollmentToken": "%s"}
+				""".formatted(enrollmentToken));
+	}
+
+	MockHttpServletResponse confirmEnrollment(String enrollmentToken, String code) throws Exception {
+		return postJson("/mfa/enroll/confirm", """
+				{"enrollmentToken": "%s", "code": "%s"}
+				""".formatted(enrollmentToken, code));
+	}
+
+	/** Sends {@code code} if given, else {@code password} if given, else an empty body. */
+	MockHttpServletResponse stepUp(Session session, String code, String password) throws Exception {
+		String body = (code != null) ? """
+				{"code": "%s"}
+				""".formatted(code) : (password != null) ? """
+				{"password": "%s"}
+				""".formatted(password) : "{}";
+		return perform(post(AUTH + "/step-up").contentType(MediaType.APPLICATION_JSON).content(body), session, true);
+	}
+
+	/** The code the authenticator app shows at {@code time} for a base32 secret. */
+	static String totp(String base32Secret, Instant time) {
+		return Totp.codeAt(base32Decode(base32Secret), time);
+	}
+
+	static byte[] base32Decode(String base32) {
+		String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+		byte[] out = new byte[base32.length() * 5 / 8];
+		int buffer = 0;
+		int bits = 0;
+		int index = 0;
+		for (char c : base32.toCharArray()) {
+			buffer = (buffer << 5) | alphabet.indexOf(c);
+			bits += 5;
+			if (bits >= 8) {
+				out[index++] = (byte) (buffer >> (bits - 8));
+				bits -= 8;
+			}
+		}
+		return out;
+	}
+
+	private MockHttpServletResponse postJson(String path, String json) throws Exception {
+		return this.mvc.perform(post(AUTH + path).contentType(MediaType.APPLICATION_JSON).content(json))
+			.andReturn().getResponse();
 	}
 
 	MockHttpServletResponse changeFirstPassword(String changeToken, String newPassword) throws Exception {

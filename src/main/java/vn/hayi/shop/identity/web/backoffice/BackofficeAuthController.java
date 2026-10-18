@@ -13,9 +13,15 @@ import org.springframework.web.bind.annotation.RestController;
 import vn.hayi.shop.identity.application.FirstPasswordChangeService;
 import vn.hayi.shop.identity.application.LoginResult;
 import vn.hayi.shop.identity.application.LoginService;
+import vn.hayi.shop.identity.application.MfaEnrollment;
+import vn.hayi.shop.identity.application.MfaEnrollmentService;
+import vn.hayi.shop.identity.application.MfaResult;
+import vn.hayi.shop.identity.application.MfaVerificationService;
 import vn.hayi.shop.identity.application.RefreshResult;
 import vn.hayi.shop.identity.application.SessionService;
 import vn.hayi.shop.identity.application.SessionTokens;
+import vn.hayi.shop.identity.application.StepUpResult;
+import vn.hayi.shop.identity.application.StepUpService;
 import vn.hayi.shop.platform.security.AuthCookies;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.CsrfTokens;
@@ -25,6 +31,12 @@ import vn.hayi.shop.platform.web.spec.backoffice.api.AuthApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.FirstPasswordChangeRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.LoginRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.LoginResponseDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.MfaEnrollmentConfirmRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.MfaEnrollmentConfirmResponseDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.MfaEnrollmentRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.MfaEnrollmentResponseDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.MfaVerifyRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.StepUpRequestDto;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.error.ThrottledException;
@@ -37,6 +49,12 @@ class BackofficeAuthController implements AuthApi {
 
 	private final FirstPasswordChangeService firstPasswordChange;
 
+	private final MfaVerificationService mfaVerification;
+
+	private final MfaEnrollmentService mfaEnrollment;
+
+	private final StepUpService stepUp;
+
 	private final SessionService sessions;
 
 	private final AuthCookies cookies;
@@ -46,9 +64,13 @@ class BackofficeAuthController implements AuthApi {
 	private final HttpServletRequest request;
 
 	BackofficeAuthController(LoginService login, FirstPasswordChangeService firstPasswordChange,
+			MfaVerificationService mfaVerification, MfaEnrollmentService mfaEnrollment, StepUpService stepUp,
 			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, HttpServletRequest request) {
 		this.login = login;
 		this.firstPasswordChange = firstPasswordChange;
+		this.mfaVerification = mfaVerification;
+		this.mfaEnrollment = mfaEnrollment;
+		this.stepUp = stepUp;
 		this.sessions = sessions;
 		this.cookies = cookies;
 		this.csrfTokens = csrfTokens;
@@ -58,10 +80,15 @@ class BackofficeAuthController implements AuthApi {
 	@Override
 	public ResponseEntity<LoginResponseDto> login(LoginRequestDto body) {
 		return switch (this.login.loginBackoffice(body.getIdentifier(), body.getPassword(), client())) {
-			case LoginResult.Authenticated authenticated ->
-				ResponseEntity.ok().headers(setCookies(sessionCookies(authenticated.tokens()))).body(new LoginResponseDto(false, null));
+			case LoginResult.Authenticated authenticated -> ResponseEntity.ok()
+				.headers(setCookies(sessionCookies(authenticated.tokens())))
+				.body(new LoginResponseDto(false, null, false, null, false, null));
 			case LoginResult.PasswordChangeRequired change ->
-				ResponseEntity.ok(new LoginResponseDto(true, change.changeToken()));
+				ResponseEntity.ok(new LoginResponseDto(true, change.changeToken(), false, null, false, null));
+			case LoginResult.MfaRequired mfa ->
+				ResponseEntity.ok(new LoginResponseDto(false, null, true, mfa.challengeId(), false, null));
+			case LoginResult.MfaEnrollmentRequired enrollment ->
+				ResponseEntity.ok(new LoginResponseDto(false, null, false, null, true, enrollment.enrollmentToken()));
 			case LoginResult.Rejected rejected -> throw new DomainException(rejected.code(), "Login rejected");
 			case LoginResult.Locked locked -> throw new ThrottledException(locked.code(),
 					"Login locked", locked.retryAfter(), Math.max(1, (locked.retryAfter().toSeconds() + 59) / 60));
@@ -72,6 +99,43 @@ class BackofficeAuthController implements AuthApi {
 	public ResponseEntity<Void> changeFirstPassword(FirstPasswordChangeRequestDto body) {
 		this.firstPasswordChange.change(body.getChangeToken(), body.getNewPassword(), client());
 		return ResponseEntity.noContent().build();
+	}
+
+	@Override
+	public ResponseEntity<Void> verifyMfa(MfaVerifyRequestDto body) {
+		return switch (this.mfaVerification.verify(body.getMfaChallengeId(), body.getCode(), client())) {
+			case MfaResult.Authenticated authenticated ->
+				ResponseEntity.noContent().headers(setCookies(sessionCookies(authenticated.tokens()))).build();
+			case MfaResult.Enrolled enrolled -> throw new IllegalStateException("Verification never enrolls");
+			case MfaResult.Rejected rejected -> throw new DomainException(rejected.code(), "MFA verification rejected");
+		};
+	}
+
+	@Override
+	public ResponseEntity<MfaEnrollmentResponseDto> startMfaEnrollment(MfaEnrollmentRequestDto body) {
+		MfaEnrollment enrollment = this.mfaEnrollment.start(body.getEnrollmentToken());
+		return ResponseEntity.ok(new MfaEnrollmentResponseDto(enrollment.otpauthUri(), enrollment.secret()));
+	}
+
+	@Override
+	public ResponseEntity<MfaEnrollmentConfirmResponseDto> confirmMfaEnrollment(MfaEnrollmentConfirmRequestDto body) {
+		return switch (this.mfaEnrollment.confirm(body.getEnrollmentToken(), body.getCode(), client())) {
+			case MfaResult.Enrolled enrolled -> ResponseEntity.ok()
+				.headers(setCookies(sessionCookies(enrolled.tokens())))
+				.body(new MfaEnrollmentConfirmResponseDto(enrolled.recoveryCodes()));
+			case MfaResult.Authenticated authenticated -> throw new IllegalStateException("Enrollment always enrolls");
+			case MfaResult.Rejected rejected -> throw new DomainException(rejected.code(), "MFA enrollment rejected");
+		};
+	}
+
+	@Override
+	public ResponseEntity<Void> stepUp(StepUpRequestDto body, String csrfHeader) {
+		AuthenticatedSession session = AuthenticatedSession.current()
+			.orElseThrow(() -> new DomainException(CommonErrorCode.AUTH_REQUIRED, "No session"));
+		return switch (this.stepUp.stepUp(session, body.getCode(), body.getPassword(), client())) {
+			case StepUpResult.Verified verified -> ResponseEntity.noContent().build();
+			case StepUpResult.Rejected rejected -> throw new DomainException(rejected.code(), "Step-up rejected");
+		};
 	}
 
 	@Override
