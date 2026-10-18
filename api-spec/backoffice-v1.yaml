@@ -76,8 +76,10 @@ paths:
       description: |
         Answers the challenge from login (TTL 5 minutes) with a 6-digit TOTP code or an unused recovery code, then
         sets the session cookies. Wrong code → `401 MFA_CODE_INVALID`; the 5th wrong code locks the challenge →
-        `401 MFA_CHALLENGE_LOCKED` and the user logs in again. Unknown, expired or used challenge →
-        `401 AUTH_REQUIRED` (Decision L1). MFA failures do not count towards the login lock.
+        `401 MFA_CHALLENGE_LOCKED` and the user logs in again. Unknown, expired, used or replaced challenge (a new
+        login replaces the user's open one) → `401 AUTH_REQUIRED`. The 10th wrong code of the user within a sliding
+        15 minutes, across challenges, locks the login for 15 minutes → `429 AUTH_LOGIN_LOCKED` (Decision L1). MFA
+        failures do not count towards the password failures.
       security: []
       requestBody:
         required: true
@@ -91,6 +93,7 @@ paths:
             Set-Cookie: { $ref: '#/components/headers/SetCookie' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /auth/mfa/enroll:
     post:
       tags: [Auth]

@@ -1,5 +1,6 @@
 package vn.hayi.shop.identity.application;
 
+import java.time.Duration;
 import java.util.List;
 
 import vn.hayi.shop.shared.error.ErrorCode;
@@ -18,6 +19,10 @@ public sealed interface MfaResult {
 	}
 
 	record Rejected(ErrorCode code) implements MfaResult {
+	}
+
+	/** Too many wrong codes at login: the account is locked like after failed passwords (Decision L1). */
+	record Locked(ErrorCode code, Duration retryAfter) implements MfaResult {
 	}
 
 }

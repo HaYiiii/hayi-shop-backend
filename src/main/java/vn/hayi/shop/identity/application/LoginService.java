@@ -23,6 +23,8 @@ import vn.hayi.shop.identity.domain.UserCredentialRepository;
 import vn.hayi.shop.identity.domain.UserRepository;
 import vn.hayi.shop.identity.domain.VerificationChallenge;
 import vn.hayi.shop.identity.domain.VerificationChallengeRepository;
+import vn.hayi.shop.identity.domain.VerificationPurpose;
+import vn.hayi.shop.identity.domain.VerificationStatus;
 import vn.hayi.shop.identity.infrastructure.RoleQueries;
 import vn.hayi.shop.identity.infrastructure.SecurityEventLog;
 import vn.hayi.shop.identity.infrastructure.SecurityEventType;
@@ -35,7 +37,8 @@ import vn.hayi.shop.platform.security.Tokens;
  * <p>
  * Unknown identifier and wrong password look the same to the caller. After the password, exactly one step may come
  * first, in this order: a temporary password is replaced (K3); an active MFA factor is answered (L1); a role that
- * requires MFA enrolls one (D4, L6). Only then is a session opened.
+ * requires MFA enrolls one (D4, L6). Only then is a session opened, and only then does the login count as
+ * successful for the failure windows.
  */
 @Service
 public class LoginService {
@@ -119,7 +122,6 @@ public class LoginService {
 					Map.of("reason", SecurityEventLog.NO_BACKOFFICE_ACCESS));
 			return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
 		}
-		user.registerSuccessfulLogin(now);
 		if (credential.isMustChangePassword()) {
 			passwordAccepted(user, client, "PASSWORD_CHANGE");
 			return new LoginResult.PasswordChangeRequired(this.tokens.issuePasswordChangeToken(user.getId()));
@@ -127,6 +129,8 @@ public class LoginService {
 		if (this.mfaCodes.hasActiveFactor(user.getId())) {
 			passwordAccepted(user, client, "MFA");
 			Mfa mfa = this.properties.mfa();
+			this.challenges.expireOpen(user.getId(), VerificationPurpose.MFA_LOGIN, VerificationStatus.PENDING,
+					VerificationStatus.EXPIRED);
 			VerificationChallenge challenge = this.challenges.save(VerificationChallenge.mfaLogin(user.getId(),
 					LoginIdentifier.normalizeEmail(identifier), now, mfa.challengeTtl(), mfa.challengeMaxAttempts()));
 			return new LoginResult.MfaRequired(challenge.getId());

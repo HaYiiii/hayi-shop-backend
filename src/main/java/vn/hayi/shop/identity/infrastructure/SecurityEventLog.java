@@ -26,6 +26,9 @@ public class SecurityEventLog implements SecurityEventSink {
 	/** {@code LOGIN_FAILED} reason for a correct password on an account without Backoffice access. */
 	public static final String NO_BACKOFFICE_ACCESS = "NO_BACKOFFICE_ACCESS";
 
+	/** {@code MFA_FAILED} stage of a wrong code answering a login challenge, the only one counted for the lock. */
+	public static final String LOGIN_STAGE = "LOGIN";
+
 	private final JdbcClient jdbc;
 
 	private final JsonMapper json;
@@ -75,6 +78,18 @@ public class SecurityEventLog implements SecurityEventSink {
 	@Override
 	public void csrfValidationFailed(UUID userId, UUID sessionId, ClientInfo client) {
 		record(SecurityEventType.CSRF_VALIDATION_FAILED, userId, sessionId, client);
+	}
+
+	/** Wrong MFA codes at login after {@code since}, across challenges (Decision L1); enrollment and step-up excluded. */
+	public int countLoginMfaFailures(UUID userId, Instant since) {
+		return this.jdbc.sql("""
+				SELECT COUNT(*) FROM iam_security_event
+				WHERE user_id = ? AND event_type = 'MFA_FAILED' AND occurred_at > ?
+				  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.stage')) = ?
+				""")
+			.params(toBytes(userId), since, LOGIN_STAGE)
+			.query(Integer.class)
+			.single();
 	}
 
 	/** Failed step-ups of the user's session after {@code since} (Decision L7); the user narrows it to the index. */

@@ -35,7 +35,8 @@ class OwnerBootstrapRunnerTest {
 				new IdentityProperties.Sessions(Duration.ofHours(12), Duration.ofDays(7)),
 				new IdentityProperties.Login(5, Duration.ofMinutes(15), Duration.ofMinutes(15)), Duration.ofSeconds(10),
 				new IdentityProperties.Bootstrap(email, password),
-				new IdentityProperties.Mfa(Duration.ofMinutes(5), 5, 5, Duration.ofMinutes(15)));
+				new IdentityProperties.Mfa(Duration.ofMinutes(5), 5, 5, Duration.ofMinutes(15), 10,
+						Duration.ofMinutes(15), Duration.ofMinutes(15)));
 		return new OwnerBootstrapRunner(this.bootstrap, properties);
 	}
 

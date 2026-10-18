@@ -221,16 +221,66 @@ class BackofficeMfaTest {
 	}
 
 	@Test
-	void mfaFailuresDoNotCountTowardsLoginLock() throws Exception {
+	void mfaFailuresDoNotCountTowardsPasswordFailures() throws Exception {
 		this.fixtures.storeAdmin(this.email);
-		for (int challenge = 1; challenge <= 2; challenge++) {
-			String challengeId = challengeId();
-			for (int attempt = 1; attempt <= 5; attempt++) {
-				this.auth.verifyMfa(challengeId, wrongCode());
-			}
+		wrongCodes(challengeId(), 5);
+		for (int attempt = 1; attempt <= 4; attempt++) {
+			assertProblem(this.auth.login(this.email, "not the password"), 401, "AUTH_INVALID_CREDENTIALS");
 		}
 
 		assertThat(this.auth.login(this.email, IdentityFixtures.PASSWORD).getStatus()).isEqualTo(200);
+	}
+
+	@Test
+	void tenthWrongMfaCodeAcrossChallengesLocksLogin() throws Exception {
+		UUID userId = this.fixtures.storeAdmin(this.email);
+		wrongCodes(challengeId(), 4);
+		wrongCodes(challengeId(), 4);
+		String third = challengeId();
+		wrongCodes(third, 1);
+
+		assertProblem(this.auth.verifyMfa(third, wrongCode()), 429, "AUTH_LOGIN_LOCKED");
+
+		assertProblem(this.auth.verifyMfa(third, currentCode()), 429, "AUTH_LOGIN_LOCKED");
+		assertProblem(this.auth.login(this.email, IdentityFixtures.PASSWORD), 429, "AUTH_LOGIN_LOCKED");
+		assertThat(this.fixtures.securityEvents("ACCOUNT_LOCKED", userId)).isEqualTo(1);
+		this.clock.advance(Duration.ofMinutes(15));
+		assertThat(this.auth.verifyMfa(challengeId(), currentCode()).getStatus()).isEqualTo(204);
+	}
+
+	@Test
+	void mfaFailuresOlderThanTheWindowDoNotLock() throws Exception {
+		this.fixtures.storeAdmin(this.email);
+		wrongCodes(challengeId(), 4);
+		wrongCodes(challengeId(), 4);
+		wrongCodes(challengeId(), 1);
+		this.clock.advance(Duration.ofMinutes(16));
+
+		assertProblem(this.auth.verifyMfa(challengeId(), wrongCode()), 401, "MFA_CODE_INVALID");
+	}
+
+	@Test
+	void completedLoginResetsMfaFailures() throws Exception {
+		this.fixtures.storeAdmin(this.email);
+		wrongCodes(challengeId(), 4);
+		wrongCodes(challengeId(), 4);
+		String third = challengeId();
+		wrongCodes(third, 1);
+		assertThat(this.auth.verifyMfa(third, currentCode()).getStatus()).isEqualTo(204);
+		this.clock.advance(Duration.ofSeconds(30));
+
+		assertProblem(this.auth.verifyMfa(challengeId(), wrongCode()), 401, "MFA_CODE_INVALID");
+	}
+
+	@Test
+	void newLoginInvalidatesEarlierChallenge() throws Exception {
+		this.fixtures.storeAdmin(this.email);
+		String earlier = challengeId();
+		String latest = challengeId();
+
+		assertProblem(this.auth.verifyMfa(earlier, currentCode()), 401, "AUTH_REQUIRED");
+
+		assertThat(this.auth.verifyMfa(latest, currentCode()).getStatus()).isEqualTo(204);
 	}
 
 	@Test
@@ -272,6 +322,13 @@ class BackofficeMfaTest {
 		MockHttpServletResponse login = this.auth.login(this.email, IdentityFixtures.PASSWORD);
 		assertThat(login.getStatus()).as(login.getContentAsString()).isEqualTo(200);
 		return JsonPath.read(login.getContentAsString(), "$.mfaChallengeId");
+	}
+
+	private void wrongCodes(String challengeId, int count) throws Exception {
+		for (int attempt = 1; attempt <= count; attempt++) {
+			MockHttpServletResponse response = this.auth.verifyMfa(challengeId, wrongCode());
+			assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(401);
+		}
 	}
 
 	private String currentCode() {

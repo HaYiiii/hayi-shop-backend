@@ -1,5 +1,6 @@
 package vn.hayi.shop.identity.web.backoffice;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,6 +40,7 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.MfaVerifyRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.StepUpRequestDto;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.error.ErrorCode;
 import vn.hayi.shop.shared.error.ThrottledException;
 
 /** {@code /api/backoffice/v1/auth} (API 01-security §6.2); maps HTTP and cookies to the identity use cases. */
@@ -90,8 +92,7 @@ class BackofficeAuthController implements AuthApi {
 			case LoginResult.MfaEnrollmentRequired enrollment ->
 				ResponseEntity.ok(new LoginResponseDto(false, null, false, null, true, enrollment.enrollmentToken()));
 			case LoginResult.Rejected rejected -> throw new DomainException(rejected.code(), "Login rejected");
-			case LoginResult.Locked locked -> throw new ThrottledException(locked.code(),
-					"Login locked", locked.retryAfter(), Math.max(1, (locked.retryAfter().toSeconds() + 59) / 60));
+			case LoginResult.Locked locked -> throw loginLocked(locked.code(), locked.retryAfter());
 		};
 	}
 
@@ -108,6 +109,7 @@ class BackofficeAuthController implements AuthApi {
 				ResponseEntity.noContent().headers(setCookies(sessionCookies(authenticated.tokens()))).build();
 			case MfaResult.Enrolled enrolled -> throw new IllegalStateException("Verification never enrolls");
 			case MfaResult.Rejected rejected -> throw new DomainException(rejected.code(), "MFA verification rejected");
+			case MfaResult.Locked locked -> throw loginLocked(locked.code(), locked.retryAfter());
 		};
 	}
 
@@ -125,6 +127,7 @@ class BackofficeAuthController implements AuthApi {
 				.body(new MfaEnrollmentConfirmResponseDto(enrolled.recoveryCodes()));
 			case MfaResult.Authenticated authenticated -> throw new IllegalStateException("Enrollment always enrolls");
 			case MfaResult.Rejected rejected -> throw new DomainException(rejected.code(), "MFA enrollment rejected");
+			case MfaResult.Locked locked -> throw new IllegalStateException("Enrollment never locks the login");
 		};
 	}
 
@@ -181,6 +184,11 @@ class BackofficeAuthController implements AuthApi {
 
 	private ClientInfo client() {
 		return ClientInfo.from(this.request);
+	}
+
+	/** {@code 429} with {@code Retry-After}; the message names the minutes left, rounded up. */
+	private static ThrottledException loginLocked(ErrorCode code, Duration retryAfter) {
+		return new ThrottledException(code, "Login locked", retryAfter, Math.max(1, (retryAfter.toSeconds() + 59) / 60));
 	}
 
 }
