@@ -47,7 +47,7 @@ class BackofficeSessionTest {
 
 	@BeforeEach
 	void setUp() {
-		this.auth = new BackofficeAuth(this.mvc);
+		this.auth = new BackofficeAuth(this.mvc, this.clock);
 		this.email = IdentityFixtures.uniqueEmail();
 		this.userId = this.fixtures.storeAdmin(this.email);
 	}

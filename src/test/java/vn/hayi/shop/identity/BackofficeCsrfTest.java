@@ -6,6 +6,7 @@ import static vn.hayi.shop.identity.BackofficeLoginTest.assertProblem;
 
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 
+import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
 import vn.hayi.shop.identity.BackofficeAuth.Session;
@@ -36,6 +38,9 @@ class BackofficeCsrfTest {
 	MockMvc mvc;
 
 	@Autowired
+	MutableClock clock;
+
+	@Autowired
 	IdentityFixtures fixtures;
 
 	BackofficeAuth auth;
@@ -44,9 +49,14 @@ class BackofficeCsrfTest {
 
 	UUID userId;
 
+	@AfterEach
+	void resetClock() {
+		this.clock.reset();
+	}
+
 	@BeforeEach
 	void setUp() {
-		this.auth = new BackofficeAuth(this.mvc);
+		this.auth = new BackofficeAuth(this.mvc, this.clock);
 		this.email = IdentityFixtures.uniqueEmail();
 		this.userId = this.fixtures.storeAdmin(this.email);
 	}

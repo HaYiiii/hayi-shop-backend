@@ -131,7 +131,8 @@ public class SessionService {
 		return current;
 	}
 
-	private void revoke(UserSession session, RevokeReason reason, Instant now, ClientInfo client) {
+	/** Ends the session now; the next request with its access token is refused (cache evicted after commit). */
+	void revoke(UserSession session, RevokeReason reason, Instant now, ClientInfo client) {
 		if (session.revoke(reason, now)) {
 			this.sessionStatus.evictAfterCommit(session.getId());
 			this.securityEvents.record(SecurityEventType.SESSION_REVOKED, session.getUserId(), session.getId(), client);

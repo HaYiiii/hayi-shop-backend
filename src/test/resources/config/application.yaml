@@ -2,3 +2,4 @@
 hayi:
   security:
     allow-ephemeral-key: true   # tests never use a real signing key
+    mfa-encryption-key: dGVzdC1vbmx5LW1mYS1rZXktMzItYnl0ZXMtbG9uZyE=   # test-only AES-256 key, never used elsewhere

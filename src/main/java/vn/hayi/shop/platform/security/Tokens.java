@@ -1,6 +1,7 @@
 package vn.hayi.shop.platform.security;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +44,9 @@ public class Tokens {
 	/** {@code aud} of the single-purpose token used by {@code POST /auth/password/first-change} (Decision K3). */
 	static final String PASSWORD_CHANGE_AUDIENCE = "hayi-backoffice-password-change";
 
+	/** {@code aud} of the single-purpose token used by {@code POST /auth/mfa/enroll*} (Decision L2). */
+	static final String MFA_ENROLLMENT_AUDIENCE = "hayi-backoffice-mfa-enrollment";
+
 	/** Error code of an expired JWT; surfaces as {@code AUTH_TOKEN_EXPIRED} rather than {@code AUTH_REQUIRED}. */
 	static final String EXPIRED = "token_expired";
 
@@ -56,12 +60,15 @@ public class Tokens {
 
 	private final JwtDecoder passwordChangeDecoder;
 
+	private final JwtDecoder mfaEnrollmentDecoder;
+
 	Tokens(SigningKeys keys, SecurityProperties properties, Clock clock) {
 		this.keys = keys;
 		this.properties = properties;
 		this.clock = clock;
 		this.encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(keys.jwk())));
 		this.passwordChangeDecoder = decoder(PASSWORD_CHANGE_AUDIENCE);
+		this.mfaEnrollmentDecoder = decoder(MFA_ENROLLMENT_AUDIENCE);
 	}
 
 	/** Short-lived access token for a session on {@code surface}; expires with the access cookie. */
@@ -81,21 +88,39 @@ public class Tokens {
 
 	/** Lets the holder of a temporary password set a new one, and nothing else (Decision K3). */
 	public String issuePasswordChangeToken(UUID userId) {
-		Instant now = Instant.now(this.clock);
-		return encode(JwtClaimsSet.builder()
-			.issuer(this.properties.issuer())
-			.audience(List.of(PASSWORD_CHANGE_AUDIENCE))
-			.subject(userId.toString())
-			.issuedAt(now)
-			.expiresAt(now.plus(this.properties.passwordChangeTokenTtl()))
-			.id(UUID.randomUUID().toString())
-			.build());
+		return issueSinglePurpose(PASSWORD_CHANGE_AUDIENCE, userId, this.properties.passwordChangeTokenTtl());
 	}
 
 	/** The user a valid, unexpired password-change token was issued to. */
 	public Optional<UUID> verifyPasswordChangeToken(String token) {
+		return subjectOf(this.passwordChangeDecoder, token);
+	}
+
+	/** Lets a user whose role requires MFA enroll TOTP, and nothing else (Decision L2). */
+	public String issueMfaEnrollmentToken(UUID userId) {
+		return issueSinglePurpose(MFA_ENROLLMENT_AUDIENCE, userId, this.properties.mfaEnrollmentTokenTtl());
+	}
+
+	/** The user a valid, unexpired MFA enrollment token was issued to. */
+	public Optional<UUID> verifyMfaEnrollmentToken(String token) {
+		return subjectOf(this.mfaEnrollmentDecoder, token);
+	}
+
+	private String issueSinglePurpose(String audience, UUID userId, Duration ttl) {
+		Instant now = Instant.now(this.clock);
+		return encode(JwtClaimsSet.builder()
+			.issuer(this.properties.issuer())
+			.audience(List.of(audience))
+			.subject(userId.toString())
+			.issuedAt(now)
+			.expiresAt(now.plus(ttl))
+			.id(UUID.randomUUID().toString())
+			.build());
+	}
+
+	private static Optional<UUID> subjectOf(JwtDecoder decoder, String token) {
 		try {
-			return Optional.of(UUID.fromString(this.passwordChangeDecoder.decode(token).getSubject()));
+			return Optional.of(UUID.fromString(decoder.decode(token).getSubject()));
 		}
 		catch (JwtException | IllegalArgumentException ex) {
 			return Optional.empty();

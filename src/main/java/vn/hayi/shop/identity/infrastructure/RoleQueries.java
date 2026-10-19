@@ -43,4 +43,12 @@ public class RoleQueries {
 				""").param(toBytes(userId)).query(Boolean.class).single();
 	}
 
+	/** Roles with {@code requires_mfa} (every STORE role, Decision D4) make MFA mandatory at Backoffice login. */
+	public boolean requiresMfa(UUID userId) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_store_role usr JOIN iam_role r ON r.id = usr.role_id
+				               WHERE usr.user_id = ? AND r.requires_mfa = 1)
+				""").param(toBytes(userId)).query(Boolean.class).single();
+	}
+
 }

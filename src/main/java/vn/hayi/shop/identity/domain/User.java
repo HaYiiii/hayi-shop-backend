@@ -24,6 +24,8 @@ public class User {
 
 	static final String LOCK_REASON_FAILED_LOGINS = "TOO_MANY_FAILED_LOGINS";
 
+	static final String LOCK_REASON_FAILED_MFA = "TOO_MANY_FAILED_MFA_CODES";
+
 	@Id
 	private UUID id;
 
@@ -106,7 +108,23 @@ public class User {
 		return false;
 	}
 
-	/** Correct password: the failure streak and any expired lock are cleared. */
+	/**
+	 * Counts a wrong MFA code at login (Decision L1) and locks the account like failed logins do; the password failure
+	 * count is left alone.
+	 * @param earlierFailures wrong login MFA codes since {@link #failureWindowStart}, not counting this one
+	 * @return {@code true} if this code locked the account
+	 */
+	public boolean registerFailedMfaCode(Instant now, int earlierFailures, LoginLockPolicy policy) {
+		if (earlierFailures + 1 < policy.maxFailures()) {
+			return false;
+		}
+		this.lockedUntil = now.plus(policy.lockDuration());
+		this.lockReason = LOCK_REASON_FAILED_MFA;
+		this.updatedAt = now;
+		return true;
+	}
+
+	/** Every login step passed: the failure streaks and any expired lock are cleared. */
 	public void registerSuccessfulLogin(Instant now) {
 		this.failedLoginCount = 0;
 		this.lockedUntil = null;

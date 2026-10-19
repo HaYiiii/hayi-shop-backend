@@ -8,15 +8,28 @@ import org.springframework.stereotype.Component;
 
 import vn.hayi.shop.identity.domain.RefreshToken;
 import vn.hayi.shop.identity.domain.RefreshTokenRepository;
+import vn.hayi.shop.identity.domain.SessionChannel;
+import vn.hayi.shop.identity.domain.UserRepository;
 import vn.hayi.shop.identity.domain.UserSession;
+import vn.hayi.shop.identity.domain.UserSessionRepository;
+import vn.hayi.shop.identity.infrastructure.SecurityEventLog;
+import vn.hayi.shop.identity.infrastructure.SecurityEventType;
+import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.CsrfTokens;
 import vn.hayi.shop.platform.security.Surface;
 import vn.hayi.shop.platform.security.Tokens;
+import vn.hayi.shop.shared.actor.Persona;
 import vn.hayi.shop.shared.id.UuidV7;
 
-/** Mints the token set of a session: a new refresh token of its family plus access and CSRF tokens. */
+/**
+ * Opens sessions and mints their token set: a new refresh token of the family plus access and CSRF tokens.
+ */
 @Component
 class SessionIssuer {
+
+	private final UserRepository users;
+
+	private final UserSessionRepository sessions;
 
 	private final RefreshTokenRepository refreshTokens;
 
@@ -28,13 +41,31 @@ class SessionIssuer {
 
 	private final IdentityProperties properties;
 
-	SessionIssuer(RefreshTokenRepository refreshTokens, RefreshTokenCodec codec, Tokens tokens, CsrfTokens csrfTokens,
-			IdentityProperties properties) {
+	private final SecurityEventLog securityEvents;
+
+	SessionIssuer(UserRepository users, UserSessionRepository sessions, RefreshTokenRepository refreshTokens, RefreshTokenCodec codec,
+			Tokens tokens, CsrfTokens csrfTokens, IdentityProperties properties, SecurityEventLog securityEvents) {
+		this.users = users;
+		this.sessions = sessions;
 		this.refreshTokens = refreshTokens;
 		this.codec = codec;
 		this.tokens = tokens;
 		this.csrfTokens = csrfTokens;
 		this.properties = properties;
+		this.securityEvents = securityEvents;
+	}
+
+	/**
+	 * A new Backoffice session for a user who passed every login step (password, MFA): the login is successful, so the
+	 * password and MFA failure windows restart here (Decision K2, L1).
+	 */
+	SessionTokens openBackofficeSession(UUID userId, ClientInfo client, Instant now) {
+		this.users.findByIdForUpdate(userId).orElseThrow().registerSuccessfulLogin(now);
+		UserSession session = this.sessions.save(UserSession.open(userId, Persona.STAFF, SessionChannel.BACKOFFICE_WEB,
+				client.ipAddress(), client.userAgent(), now, this.properties.backoffice().absoluteLifetime()));
+		RefreshToken refreshToken = newRefreshToken(session, now);
+		this.securityEvents.record(SecurityEventType.SESSION_CREATED, userId, session.getId(), client);
+		return tokensFor(session, refreshToken, now);
 	}
 
 	/** A new refresh token, idle-limited and never outliving the session. */

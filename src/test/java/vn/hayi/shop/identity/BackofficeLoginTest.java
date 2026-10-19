@@ -49,7 +49,7 @@ class BackofficeLoginTest {
 
 	@BeforeEach
 	void setUp() {
-		this.auth = new BackofficeAuth(this.mvc);
+		this.auth = new BackofficeAuth(this.mvc, this.clock);
 		this.email = IdentityFixtures.uniqueEmail();
 	}
 
@@ -59,24 +59,19 @@ class BackofficeLoginTest {
 	}
 
 	@Test
-	void loginSucceedsAndSetsSessionCookies() throws Exception {
+	void correctPasswordAsksForTheMfaCodeBeforeAnySession() throws Exception {
 		UUID userId = this.fixtures.storeAdmin(this.email);
 
 		MockHttpServletResponse response = this.auth.login(this.email, IdentityFixtures.PASSWORD);
 
 		assertThat(response.getStatus()).isEqualTo(200);
-		assertThat(response.getContentAsString()).isEqualTo("{\"passwordChangeRequired\":false,\"changeToken\":null}");
-		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_at")).hasValueSatisfying(cookie -> assertThat(cookie)
-			.contains("Path=/api/backoffice", "Max-Age=600", "Secure", "HttpOnly", "SameSite=Lax"));
-		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_rt")).hasValueSatisfying(cookie -> assertThat(cookie)
-			.contains("Path=/api/backoffice/v1/auth", "Secure", "HttpOnly", "SameSite=Strict"));
-		assertThat(BackofficeAuth.setCookieHeader(response, "hy_csrf")).hasValueSatisfying(cookie -> assertThat(cookie)
-			.contains("Path=/", "Secure", "SameSite=Lax").doesNotContain("HttpOnly"));
+		String challengeId = JsonPath.read(response.getContentAsString(), "$.mfaChallengeId");
+		assertThat(response.getContentAsString()).isEqualTo("""
+				{"passwordChangeRequired":false,"changeToken":null,"mfaRequired":true,"mfaChallengeId":"%s",\
+				"mfaEnrollmentRequired":false,"enrollmentToken":null}""".formatted(challengeId));
+		assertThat(response.getHeaders("Set-Cookie")).isEmpty();
 		assertThat(this.fixtures.securityEvents("LOGIN_SUCCESS", userId)).isEqualTo(1);
-		assertThat(this.fixtures.securityEvents("SESSION_CREATED", userId)).isEqualTo(1);
-
-		BackofficeAuth.Session session = BackofficeAuth.Session.from(response);
-		assertThat(this.auth.csrf(session).getStatus()).isEqualTo(204);
+		assertThat(this.fixtures.securityEvents("SESSION_CREATED", userId)).isZero();
 	}
 
 	@Test

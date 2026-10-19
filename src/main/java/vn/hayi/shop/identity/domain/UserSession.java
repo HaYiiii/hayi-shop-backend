@@ -89,6 +89,11 @@ public class UserSession {
 		return true;
 	}
 
+	/** Fresh re-authentication: actions marked S are allowed for the freshness window (API 01-security §8). */
+	public void verifyStepUp(Instant now) {
+		this.stepUpVerifiedAt = now;
+	}
+
 	public void touch(Instant now) {
 		this.lastActiveAt = now;
 	}

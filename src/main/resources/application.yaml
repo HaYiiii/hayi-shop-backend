@@ -56,6 +56,7 @@ hayi:
   operational-timezone: Asia/Ho_Chi_Minh
   security:
     signing-key: ${HAYI_SECURITY_SIGNING_KEY:}   # ES256 private JWK (JSON); never committed
+    mfa-encryption-key: ${HAYI_SECURITY_MFA_ENCRYPTION_KEY:}   # AES-256 key (base64) for TOTP secrets (Decision L3)
   identity:
     bootstrap:
       owner-email: ${HAYI_BOOTSTRAP_OWNER_EMAIL:}        # Decision K1: set both once on a new environment

@@ -6,18 +6,20 @@ import java.util.Set;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * Auth endpoints that do not run on an access token (API 01-security §6). Login and first password change happen
- * before any session exists, so they need neither access token nor CSRF; refresh and logout run on the refresh
- * cookie and still need the CSRF header (§3.1).
+ * Auth endpoints that do not run on an access token (API 01-security §6). Login, first password change and the MFA
+ * steps of login happen before any session exists, so they need neither access token nor CSRF; refresh and logout
+ * run on the refresh cookie and still need the CSRF header (§3.1).
  */
 final class AuthEndpoints {
 
-	private static final Set<String> BEFORE_SESSION = Set.of("/login", "/password/first-change");
+	private static final Set<String> BEFORE_SESSION = Set.of("/login", "/password/first-change", "/mfa/verify",
+			"/mfa/enroll", "/mfa/enroll/confirm");
 
 	private static final Set<String> ON_REFRESH_TOKEN = Set.of("/refresh", "/logout");
 
 	/** Ant patterns for {@code permitAll}. */
 	static final String[] PUBLIC_PATTERNS = { "/api/*/v1/auth/login", "/api/*/v1/auth/password/first-change",
+			"/api/*/v1/auth/mfa/verify", "/api/*/v1/auth/mfa/enroll", "/api/*/v1/auth/mfa/enroll/confirm",
 			"/api/*/v1/auth/refresh", "/api/*/v1/auth/logout" };
 
 	private AuthEndpoints() {
