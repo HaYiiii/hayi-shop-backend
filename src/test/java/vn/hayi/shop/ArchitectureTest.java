@@ -43,6 +43,13 @@ class ArchitectureTest {
 		.should().dependOnClassesThat().resideInAnyPackage("vn.hayi.shop.*.domain..", "vn.hayi.shop.*.infrastructure..")
 		.allowEmptyShould(true);
 
+	/** Action S of the permission matrix always carries {@code @RequiresStepUp} (Decision M5). */
+	@ArchTest
+	static final ArchRule stepUpPermissionsRequireStepUp = AuthorizationRules.stepUpPermissionsRequireStepUp;
+
+	@ArchTest
+	static final ArchRule backofficeEndpointsDeclarePermission = AuthorizationRules.backofficeEndpointsDeclarePermission;
+
 	@ArchTest
 	static final ArchRule applicationDoesNotDependOnWeb = noClasses()
 		.that().resideInAPackage("..application..")
