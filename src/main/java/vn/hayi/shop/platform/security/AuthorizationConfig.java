@@ -6,25 +6,33 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** Registers the {@link RequiresStepUp} check for every controller. */
+/**
+ * Registers the endpoint checks for every controller, in the order of Decision M1: {@link RequiresPermission}
+ * (permission, branch scope) before {@link RequiresStepUp}.
+ */
 @Configuration(proxyBeanMethods = false)
-class StepUpConfig implements WebMvcConfigurer {
+class AuthorizationConfig implements WebMvcConfigurer {
 
-	private final StepUpChecker checker;
+	private final PermissionResolver permissions;
+
+	private final StepUpChecker stepUps;
 
 	private final SecurityProperties properties;
 
 	private final Clock clock;
 
-	StepUpConfig(StepUpChecker checker, SecurityProperties properties, Clock clock) {
-		this.checker = checker;
+	AuthorizationConfig(PermissionResolver permissions, StepUpChecker stepUps, SecurityProperties properties,
+			Clock clock) {
+		this.permissions = permissions;
+		this.stepUps = stepUps;
 		this.properties = properties;
 		this.clock = clock;
 	}
 
 	@Override
 	public void addInterceptors(InterceptorRegistry registry) {
-		registry.addInterceptor(new StepUpInterceptor(this.checker, this.properties, this.clock));
+		registry.addInterceptor(new AuthorizationInterceptor(this.permissions));
+		registry.addInterceptor(new StepUpInterceptor(this.stepUps, this.properties, this.clock));
 	}
 
 }
