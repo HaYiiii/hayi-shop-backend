@@ -81,6 +81,15 @@ class BackofficeAuthorizationTest {
 	}
 
 	@Test
+	void missingPermissionIsReportedBeforeBranchScope() throws Exception {
+		Session barista = staffAt(this.branchA, "BARISTA");
+
+		assertProblem(approveRefund(barista, this.branchB), 403, "PERMISSION_DENIED");
+		assertProblem(this.auth.perform(post(PROBE + "/branches/not-a-uuid/refunds/approve"), barista, true), 403,
+				"PERMISSION_DENIED");
+	}
+
+	@Test
 	void managerCallingAnotherBranchIsDeniedByScope() throws Exception {
 		Session manager = staffAt(this.branchA, "MANAGER");
 
@@ -113,6 +122,30 @@ class BackofficeAuthorizationTest {
 		for (UUID userId : new UUID[] { ended, notYet, roleOnly }) {
 			assertProblem(orders(this.fixtures.openSession(userId), this.branchA), 403, "PERMISSION_DENIED");
 		}
+	}
+
+	@Test
+	void assignmentRangeIncludesFirstAndLastDay() throws Exception {
+		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
+		UUID startsToday = this.fixtures.branchStaff();
+		this.fixtures.addAssignment(startsToday, this.branchA, "ACTIVE", today, null);
+		this.fixtures.grantBranchRole(startsToday, this.branchA, "BARISTA");
+		UUID endsToday = this.fixtures.branchStaff();
+		this.fixtures.addAssignment(endsToday, this.branchA, "ACTIVE", today.minusDays(3), today);
+		this.fixtures.grantBranchRole(endsToday, this.branchA, "BARISTA");
+
+		assertThat(orders(this.fixtures.openSession(startsToday), this.branchA).getStatus()).isEqualTo(204);
+		assertThat(orders(this.fixtures.openSession(endsToday), this.branchA).getStatus()).isEqualTo(204);
+	}
+
+	@Test
+	void activeAssignmentPastItsLastDayGrantsNothing() throws Exception {
+		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
+		UUID userId = this.fixtures.branchStaff();
+		this.fixtures.addAssignment(userId, this.branchA, "ACTIVE", today.minusDays(5), today.minusDays(1));
+		this.fixtures.grantBranchRole(userId, this.branchA, "MANAGER");
+
+		assertProblem(orders(this.fixtures.openSession(userId), this.branchA), 403, "PERMISSION_DENIED");
 	}
 
 	@Test
@@ -167,6 +200,17 @@ class BackofficeAuthorizationTest {
 		this.fixtures.endAssignment(userId, this.branchA);
 
 		assertProblem(orders(session, this.branchA), 403, "BRANCH_SCOPE_DENIED");
+	}
+
+	@Test
+	void revokedStoreRoleIsDeniedOnNextRequest() throws Exception {
+		UUID userId = this.fixtures.storeAdmin(IdentityFixtures.uniqueEmail());
+		Session session = this.fixtures.openSession(userId);
+		assertThat(orders(session, this.branchA).getStatus()).isEqualTo(204);
+
+		this.fixtures.revokeStoreRole(userId, "ADMIN");
+
+		assertProblem(orders(session, this.branchA), 403, "PERMISSION_DENIED");
 	}
 
 	@Test

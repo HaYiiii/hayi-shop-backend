@@ -162,6 +162,12 @@ class IdentityFixtures {
 				""").params(id(UuidV7.generate()), id(userId), Instant.now(), role).update();
 	}
 
+	void revokeStoreRole(UUID userId, String role) {
+		this.jdbc.sql("""
+				DELETE FROM iam_user_store_role WHERE user_id = ? AND role_id = (SELECT id FROM iam_role WHERE code = ?)
+				""").params(id(userId), role).update();
+	}
+
 	/** A live Backoffice session with its access and CSRF cookies, as a completed login would leave them. */
 	Session openSession(UUID userId) {
 		UUID sessionId = UuidV7.generate();

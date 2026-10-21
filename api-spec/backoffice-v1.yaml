@@ -10,7 +10,7 @@ info:
     and `hy_csrf` (double-submit token, sent back as `X-CSRF-Token` on every unsafe request with a session).
 
     Authorization (Decision M): every endpoint outside `/auth` needs a permission of API 01-security §7, checked in
-    this order: missing permission → `403 PERMISSION_DENIED`; `{branchId}` outside the caller's scope →
+    this order: missing permission → `403 PERMISSION_DENIED`; `{branchId}` outside the caller's scope or malformed →
     `403 BRANCH_SCOPE_DENIED`; action **S** without a fresh step-up → `403 STEP_UP_REQUIRED`. An entity of another
     Branch than the path → `404` (API README §3.1).
 servers:

@@ -13,7 +13,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration(proxyBeanMethods = false)
 class AuthorizationConfig implements WebMvcConfigurer {
 
-	private final PermissionResolver permissions;
+	private final PermissionEvaluator permissions;
 
 	private final StepUpChecker stepUps;
 
@@ -21,7 +21,7 @@ class AuthorizationConfig implements WebMvcConfigurer {
 
 	private final Clock clock;
 
-	AuthorizationConfig(PermissionResolver permissions, StepUpChecker stepUps, SecurityProperties properties,
+	AuthorizationConfig(PermissionEvaluator permissions, StepUpChecker stepUps, SecurityProperties properties,
 			Clock clock) {
 		this.permissions = permissions;
 		this.stepUps = stepUps;

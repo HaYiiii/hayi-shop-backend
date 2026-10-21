@@ -1,6 +1,7 @@
 package vn.hayi.shop.platform.security;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,15 +14,15 @@ import org.springframework.web.servlet.HandlerMapping;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 
-/** Enforces {@link RequiresPermission}: permission, then branch scope (API README §3.1, Decision M1). */
+/** Enforces {@link RequiresPermission} through the {@link PermissionEvaluator} (API README §3.1, Decision M1). */
 final class AuthorizationInterceptor implements HandlerInterceptor {
 
 	static final String BRANCH_ID = "branchId";
 
-	private final PermissionResolver resolver;
+	private final PermissionEvaluator evaluator;
 
-	AuthorizationInterceptor(PermissionResolver resolver) {
-		this.resolver = resolver;
+	AuthorizationInterceptor(PermissionEvaluator evaluator) {
+		this.evaluator = evaluator;
 	}
 
 	@Override
@@ -30,23 +31,24 @@ final class AuthorizationInterceptor implements HandlerInterceptor {
 			return true;
 		}
 		Permission permission = method.getMethodAnnotation(RequiresPermission.class).value();
-		AuthenticatedSession session = AuthenticatedSession.current()
-			.orElseThrow(() -> new DomainException(CommonErrorCode.AUTH_REQUIRED, "No session"));
-		EffectiveAccess access = this.resolver.resolve(session.userId());
-		if (!access.holdsAnywhere(permission)) {
-			throw permissionDenied(permission);
-		}
+		AuthenticatedSession session = AuthenticatedSession.require();
 		String branchId = branchIdOf(request);
-		if (branchId != null) {
-			UUID branch = parse(branchId);
-			if (!access.inScope(branch)) {
-				throw new DomainException(CommonErrorCode.BRANCH_SCOPE_DENIED, "Branch outside the caller's scope");
-			}
-			if (!access.permissionsAt(branch).contains(permission)) {
-				throw permissionDenied(permission);
-			}
+		Optional<UUID> branch = (branchId != null) ? parse(branchId) : Optional.empty();
+		AccessDecision decision = this.evaluator.evaluate(session.userId(), permission, branch);
+		if (decision == AccessDecision.GRANTED && branchId != null && branch.isEmpty()) {
+			// A malformed id names no Branch the caller may see; the permission was still checked first (Decision M1).
+			decision = AccessDecision.BRANCH_SCOPE_DENIED;
 		}
-		return true;
+		switch (decision) {
+			case GRANTED -> {
+				return true;
+			}
+			case PERMISSION_DENIED ->
+				throw new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission " + permission);
+			case BRANCH_SCOPE_DENIED ->
+				throw new DomainException(CommonErrorCode.BRANCH_SCOPE_DENIED, "Branch outside the caller's scope");
+		}
+		throw new IllegalStateException("Unknown decision " + decision);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -56,18 +58,13 @@ final class AuthorizationInterceptor implements HandlerInterceptor {
 		return (variables != null) ? variables.get(BRANCH_ID) : null;
 	}
 
-	/** A malformed id names no Branch the caller may see. */
-	private static UUID parse(String branchId) {
+	private static Optional<UUID> parse(String branchId) {
 		try {
-			return UUID.fromString(branchId);
+			return Optional.of(UUID.fromString(branchId));
 		}
 		catch (IllegalArgumentException ex) {
-			throw new DomainException(CommonErrorCode.BRANCH_SCOPE_DENIED, "Malformed branch id");
+			return Optional.empty();
 		}
-	}
-
-	private static DomainException permissionDenied(Permission permission) {
-		return new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission " + permission);
 	}
 
 }
