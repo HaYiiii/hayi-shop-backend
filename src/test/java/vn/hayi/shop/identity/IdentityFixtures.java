@@ -1,6 +1,7 @@
 package vn.hayi.shop.identity;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -8,14 +9,20 @@ import org.springframework.boot.test.context.TestComponent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import vn.hayi.shop.identity.BackofficeAuth.Session;
 import vn.hayi.shop.identity.infrastructure.MfaSecretCipher;
 import vn.hayi.shop.platform.persistence.UuidBinary;
+import vn.hayi.shop.platform.security.CsrfTokens;
+import vn.hayi.shop.platform.security.Surface;
+import vn.hayi.shop.platform.security.Tokens;
+import vn.hayi.shop.shared.time.BranchTime;
 import vn.hayi.shop.shared.id.UuidV7;
 
 /**
  * Creates Backoffice users straight in the {@code iam_*} tables, so login/session tests do not depend on a
  * provisioning flow that does not exist yet. Users get role ADMIN (STORE scope), leaving OWNER to the bootstrap, and
- * an active TOTP factor with {@link #TOTP_SECRET} unless created without MFA.
+ * an active TOTP factor with {@link #TOTP_SECRET} unless created without MFA. Branch staff get a StaffProfile, an
+ * assignment and a BRANCH role; their sessions are opened directly, since staff login arrives with staff provisioning.
  */
 @TestComponent
 class IdentityFixtures {
@@ -31,10 +38,17 @@ class IdentityFixtures {
 
 	private final MfaSecretCipher cipher;
 
-	IdentityFixtures(JdbcClient jdbc, PasswordEncoder passwordEncoder, MfaSecretCipher cipher) {
+	private final Tokens tokens;
+
+	private final CsrfTokens csrfTokens;
+
+	IdentityFixtures(JdbcClient jdbc, PasswordEncoder passwordEncoder, MfaSecretCipher cipher, Tokens tokens,
+			CsrfTokens csrfTokens) {
 		this.jdbc = jdbc;
 		this.passwordEncoder = passwordEncoder;
 		this.cipher = cipher;
+		this.tokens = tokens;
+		this.csrfTokens = csrfTokens;
 	}
 
 	/** A unique email, so tests sharing the database never see each other's users. */
@@ -90,6 +104,80 @@ class IdentityFixtures {
 				VALUES (?, ?, ?, ?, ?)
 				""").params(id(userId), this.passwordEncoder.encode(password), mustChangePassword, now, now).update();
 		return userId;
+	}
+
+	/** A staff member with a StaffProfile, no STORE role and no Branch yet: see {@link #assignToBranch}. */
+	UUID branchStaff() {
+		UUID userId = userWithoutRole("staff-" + UUID.randomUUID() + "@hayi.test", PASSWORD, false);
+		Instant now = Instant.now();
+		this.jdbc.sql("""
+				INSERT INTO stf_staff_profile (id, user_id, employee_code, full_name, status, created_at, updated_at)
+				VALUES (?, ?, ?, 'Nhân viên test', 'ACTIVE', ?, ?)
+				""").params(id(UuidV7.generate()), id(userId), "E" + UUID.randomUUID().toString().substring(0, 8), now, now)
+			.update();
+		return userId;
+	}
+
+	/** An active SUPPORTING assignment since yesterday plus {@code role} at that Branch. */
+	void assignToBranch(UUID userId, UUID branchId, String role) {
+		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
+		addAssignment(userId, branchId, "ACTIVE", today.minusDays(1), null);
+		grantBranchRole(userId, branchId, role);
+	}
+
+	void addAssignment(UUID userId, UUID branchId, String status, LocalDate from, LocalDate to) {
+		Instant now = Instant.now();
+		this.jdbc.sql("""
+				INSERT INTO stf_staff_branch_assignment (id, staff_id, branch_id, assignment_type, status, effective_from,
+				                                         effective_to, created_at, updated_at)
+				SELECT ?, id, ?, 'SUPPORTING', ?, ?, ?, ?, ? FROM stf_staff_profile WHERE user_id = ?
+				""").params(id(UuidV7.generate()), id(branchId), status, from, to, now, now, id(userId)).update();
+	}
+
+	void endAssignment(UUID userId, UUID branchId) {
+		this.jdbc.sql("""
+				UPDATE stf_staff_branch_assignment SET status = 'ENDED', effective_to = ?
+				WHERE branch_id = ? AND staff_id = (SELECT id FROM stf_staff_profile WHERE user_id = ?)
+				""").params(LocalDate.now(BranchTime.DEFAULT_ZONE), id(branchId), id(userId)).update();
+	}
+
+	void grantBranchRole(UUID userId, UUID branchId, String role) {
+		this.jdbc.sql("""
+				INSERT INTO iam_user_branch_role (id, user_id, branch_id, role_id, granted_at)
+				SELECT ?, ?, ?, id, ? FROM iam_role WHERE code = ?
+				""").params(id(UuidV7.generate()), id(userId), id(branchId), Instant.now(), role).update();
+	}
+
+	void revokeBranchRole(UUID userId, UUID branchId, String role) {
+		this.jdbc.sql("""
+				DELETE FROM iam_user_branch_role
+				WHERE user_id = ? AND branch_id = ? AND role_id = (SELECT id FROM iam_role WHERE code = ?)
+				""").params(id(userId), id(branchId), role).update();
+	}
+
+	void grantStoreRole(UUID userId, String role) {
+		this.jdbc.sql("""
+				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
+				SELECT ?, ?, id, ? FROM iam_role WHERE code = ?
+				""").params(id(UuidV7.generate()), id(userId), Instant.now(), role).update();
+	}
+
+	void revokeStoreRole(UUID userId, String role) {
+		this.jdbc.sql("""
+				DELETE FROM iam_user_store_role WHERE user_id = ? AND role_id = (SELECT id FROM iam_role WHERE code = ?)
+				""").params(id(userId), role).update();
+	}
+
+	/** A live Backoffice session with its access and CSRF cookies, as a completed login would leave them. */
+	Session openSession(UUID userId) {
+		UUID sessionId = UuidV7.generate();
+		Instant now = Instant.now();
+		this.jdbc.sql("""
+				INSERT INTO iam_user_session (id, user_id, persona, channel, created_at, last_active_at, expires_at)
+				VALUES (?, ?, 'STAFF', 'BACKOFFICE_WEB', ?, ?, ?)
+				""").params(id(sessionId), id(userId), now, now, now.plusSeconds(3600)).update();
+		return new Session(this.tokens.issueAccessToken(Surface.BACKOFFICE, userId, sessionId), null,
+				this.csrfTokens.issue(sessionId));
 	}
 
 	/** Turns the user's MFA off, like a Manager who never enabled it (Decision D4). */

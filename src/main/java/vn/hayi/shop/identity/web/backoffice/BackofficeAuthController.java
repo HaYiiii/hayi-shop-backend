@@ -1,7 +1,9 @@
 package vn.hayi.shop.identity.web.backoffice;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,6 +13,8 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import vn.hayi.shop.identity.application.AccessService;
+import vn.hayi.shop.identity.application.EffectiveAccess;
 import vn.hayi.shop.identity.application.FirstPasswordChangeService;
 import vn.hayi.shop.identity.application.LoginResult;
 import vn.hayi.shop.identity.application.LoginService;
@@ -26,9 +30,12 @@ import vn.hayi.shop.identity.application.StepUpService;
 import vn.hayi.shop.platform.security.AuthCookies;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.CsrfTokens;
+import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.Surface;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.web.spec.backoffice.api.AuthApi;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BackofficeMeDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchAccessDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.FirstPasswordChangeRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.LoginRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.LoginResponseDto;
@@ -63,11 +70,14 @@ class BackofficeAuthController implements AuthApi {
 
 	private final CsrfTokens csrfTokens;
 
+	private final AccessService access;
+
 	private final HttpServletRequest request;
 
 	BackofficeAuthController(LoginService login, FirstPasswordChangeService firstPasswordChange,
 			MfaVerificationService mfaVerification, MfaEnrollmentService mfaEnrollment, StepUpService stepUp,
-			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, HttpServletRequest request) {
+			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, AccessService access,
+			HttpServletRequest request) {
 		this.login = login;
 		this.firstPasswordChange = firstPasswordChange;
 		this.mfaVerification = mfaVerification;
@@ -76,6 +86,7 @@ class BackofficeAuthController implements AuthApi {
 		this.sessions = sessions;
 		this.cookies = cookies;
 		this.csrfTokens = csrfTokens;
+		this.access = access;
 		this.request = request;
 	}
 
@@ -133,8 +144,7 @@ class BackofficeAuthController implements AuthApi {
 
 	@Override
 	public ResponseEntity<Void> stepUp(StepUpRequestDto body, String csrfHeader) {
-		AuthenticatedSession session = AuthenticatedSession.current()
-			.orElseThrow(() -> new DomainException(CommonErrorCode.AUTH_REQUIRED, "No session"));
+		AuthenticatedSession session = AuthenticatedSession.require();
 		return switch (this.stepUp.stepUp(session, body.getCode(), body.getPassword(), client())) {
 			case StepUpResult.Verified verified -> ResponseEntity.noContent().build();
 			case StepUpResult.Rejected rejected -> throw new DomainException(rejected.code(), "Step-up rejected");
@@ -160,10 +170,29 @@ class BackofficeAuthController implements AuthApi {
 
 	@Override
 	public ResponseEntity<Void> issueCsrfToken() {
-		AuthenticatedSession session = AuthenticatedSession.current()
-			.orElseThrow(() -> new DomainException(CommonErrorCode.AUTH_REQUIRED, "No session"));
+		AuthenticatedSession session = AuthenticatedSession.require();
 		ResponseCookie csrf = this.cookies.csrf(this.csrfTokens.issue(session.sessionId()), null);
 		return ResponseEntity.noContent().headers(setCookies(List.of(csrf))).build();
+	}
+
+	@Override
+	public ResponseEntity<BackofficeMeDto> getMe() {
+		EffectiveAccess effective = this.access.resolve(AuthenticatedSession.require().userId());
+		List<BranchAccessDto> branches = effective.branches().entrySet().stream()
+			.sorted(Map.Entry.comparingByKey())
+			.map(branch -> new BranchAccessDto(branch.getKey(), sorted(branch.getValue().roles()),
+					names(effective.permissionsAt(branch.getKey()))))
+			.toList();
+		return ResponseEntity.ok(new BackofficeMeDto(effective.userId(), sorted(effective.storeRoles()),
+				names(effective.storePermissions()), branches));
+	}
+
+	private static List<String> names(Collection<Permission> permissions) {
+		return sorted(permissions.stream().map(Permission::name).toList());
+	}
+
+	private static List<String> sorted(Collection<String> values) {
+		return values.stream().sorted().toList();
 	}
 
 	private List<ResponseCookie> sessionCookies(SessionTokens tokens) {

@@ -8,11 +8,16 @@ info:
 
     Authentication uses cookies only (API 01-security §3): `hy_b_at` (access JWT), `hy_b_rt` (refresh token)
     and `hy_csrf` (double-submit token, sent back as `X-CSRF-Token` on every unsafe request with a session).
+
+    Authorization (Decision M): every endpoint outside `/auth` needs a permission of API 01-security §7, checked in
+    this order: missing permission → `403 PERMISSION_DENIED`; `{branchId}` outside the caller's scope or malformed →
+    `403 BRANCH_SCOPE_DENIED`; action **S** without a fresh step-up → `403 STEP_UP_REQUIRED`. An entity of another
+    Branch than the path → `404` (API README §3.1).
 servers:
   - url: /api/backoffice/v1
 tags:
   - name: Auth
-    description: Backoffice login, MFA, step-up, session and CSRF (API 01-security §5–6, §8, Decision K, L)
+    description: Backoffice login, MFA, step-up, session, CSRF and the caller's access (API 01-security §5–6, §8, Decision K, L, M)
 security:
   - accessCookie: []
 paths:
@@ -215,6 +220,23 @@ paths:
           headers:
             Set-Cookie: { $ref: '#/components/headers/SetCookie' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current user's roles and permissions
+      description: |
+        For the UI permission guard only; the server checks every endpoint itself (API 01-security §6.2, Decision M4).
+        `storePermissions` apply at every Branch (STORE roles: Owner/Admin). `branches` lists the Branches where a
+        BRANCH role is in effect, i.e. backed by an active staff assignment (Decision A); their `permissions` already
+        include `storePermissions`. Resolved live, so a role change shows on the next call.
+      responses:
+        '200':
+          description: The caller's effective access.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackofficeMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 components:
   securitySchemes:
     accessCookie:
@@ -344,6 +366,39 @@ components:
         password:
           type: [string, 'null']
           maxLength: 1024
+    BackofficeMe:
+      type: object
+      required: [userId, storeRoles, storePermissions, branches]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        storeRoles:
+          type: array
+          description: Role codes held at STORE scope, e.g. `OWNER`, `ADMIN`.
+          items: { type: string }
+        storePermissions:
+          type: array
+          description: Permission codes (API 01-security §7) granted by the STORE roles, at every Branch.
+          items: { type: string }
+        branches:
+          type: array
+          items: { $ref: '#/components/schemas/BranchAccess' }
+    BranchAccess:
+      type: object
+      required: [branchId, roles, permissions]
+      properties:
+        branchId:
+          type: string
+          format: uuid
+        roles:
+          type: array
+          description: BRANCH role codes in effect at this Branch, e.g. `MANAGER`, `BARISTA`.
+          items: { type: string }
+        permissions:
+          type: array
+          description: Every permission at this Branch, `storePermissions` included.
+          items: { type: string }
     FirstPasswordChangeRequest:
       type: object
       required: [changeToken, newPassword]
@@ -370,7 +425,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
-      description: '`CSRF_INVALID`, `PERMISSION_DENIED`'
+      description: '`CSRF_INVALID`, `PERMISSION_DENIED`, `BRANCH_SCOPE_DENIED`, `STEP_UP_REQUIRED`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

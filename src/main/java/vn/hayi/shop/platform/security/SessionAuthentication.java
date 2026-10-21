@@ -4,7 +4,10 @@ import java.util.List;
 
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 
-/** Authentication for a request carrying a valid access token of a live session. Authorities come with #15. */
+/**
+ * Authentication for a request carrying a valid access token of a live session. It grants no authorities: permissions
+ * are checked per request by {@link AuthorizationInterceptor} (Decision M3).
+ */
 final class SessionAuthentication extends AbstractAuthenticationToken {
 
 	private final AuthenticatedSession session;
