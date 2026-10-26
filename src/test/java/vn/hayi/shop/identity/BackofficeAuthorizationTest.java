@@ -30,7 +30,6 @@ import vn.hayi.shop.identity.BackofficeAuth.Session;
 import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.security.RequiresStepUp;
-import vn.hayi.shop.shared.time.BranchTime;
 
 /**
  * Permission and branch scope on Backoffice endpoints (Identity §2.7, API README §3.1, API 01-security §7, Decision A,
@@ -109,12 +108,12 @@ class BackofficeAuthorizationTest {
 
 	@Test
 	void branchRoleWithoutActiveAssignmentGrantsNothing() throws Exception {
+		LocalDate today = this.fixtures.today();
 		UUID ended = this.fixtures.branchStaff();
-		this.fixtures.addAssignment(ended, this.branchA, "ENDED", LocalDate.now(BranchTime.DEFAULT_ZONE).minusDays(9),
-				LocalDate.now(BranchTime.DEFAULT_ZONE).minusDays(2));
+		this.fixtures.addAssignment(ended, this.branchA, "ENDED", today.minusDays(9), today.minusDays(2));
 		this.fixtures.grantBranchRole(ended, this.branchA, "MANAGER");
 		UUID notYet = this.fixtures.branchStaff();
-		this.fixtures.addAssignment(notYet, this.branchA, "ACTIVE", LocalDate.now(BranchTime.DEFAULT_ZONE).plusDays(1), null);
+		this.fixtures.addAssignment(notYet, this.branchA, "ACTIVE", today.plusDays(1), null);
 		this.fixtures.grantBranchRole(notYet, this.branchA, "MANAGER");
 		UUID roleOnly = this.fixtures.branchStaff();
 		this.fixtures.grantBranchRole(roleOnly, this.branchA, "MANAGER");
@@ -126,7 +125,7 @@ class BackofficeAuthorizationTest {
 
 	@Test
 	void assignmentRangeIncludesFirstAndLastDay() throws Exception {
-		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
+		LocalDate today = this.fixtures.today();
 		UUID startsToday = this.fixtures.branchStaff();
 		this.fixtures.addAssignment(startsToday, this.branchA, "ACTIVE", today, null);
 		this.fixtures.grantBranchRole(startsToday, this.branchA, "BARISTA");
@@ -140,7 +139,7 @@ class BackofficeAuthorizationTest {
 
 	@Test
 	void activeAssignmentPastItsLastDayGrantsNothing() throws Exception {
-		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
+		LocalDate today = this.fixtures.today();
 		UUID userId = this.fixtures.branchStaff();
 		this.fixtures.addAssignment(userId, this.branchA, "ACTIVE", today.minusDays(5), today.minusDays(1));
 		this.fixtures.grantBranchRole(userId, this.branchA, "MANAGER");
