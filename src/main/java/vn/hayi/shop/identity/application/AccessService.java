@@ -26,7 +26,8 @@ import vn.hayi.shop.staff.api.StaffAssignments;
  * Effective permission (Identity §2.7): permissions of the STORE roles, plus at Branch X those of the BRANCH roles at X
  * when the user has an active staff assignment at X (Decision A). Resolved from the database on every call, no cache
  * (Decision M3), so a role or assignment change applies to the next request. The role and assignment reads share one
- * read-only transaction, so a change landing between them cannot mix two states. On the class, not on
+ * read-only transaction, so a change landing between them cannot mix two states; this relies on InnoDB's default
+ * {@code REPEATABLE READ}, where the snapshot is taken at the first read ({@code READ COMMITTED} would not hold it). On the class, not on
  * {@link #resolve}: {@link #evaluate} calls it through {@code this}, past the proxy.
  */
 @Service
