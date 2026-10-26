@@ -1,5 +1,6 @@
 package vn.hayi.shop.identity;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Locale;
@@ -42,13 +43,21 @@ class IdentityFixtures {
 
 	private final CsrfTokens csrfTokens;
 
+	private final Clock clock;
+
 	IdentityFixtures(JdbcClient jdbc, PasswordEncoder passwordEncoder, MfaSecretCipher cipher, Tokens tokens,
-			CsrfTokens csrfTokens) {
+			CsrfTokens csrfTokens, Clock clock) {
 		this.jdbc = jdbc;
 		this.passwordEncoder = passwordEncoder;
 		this.cipher = cipher;
 		this.tokens = tokens;
 		this.csrfTokens = csrfTokens;
+		this.clock = clock;
+	}
+
+	/** Today at the Branch by the application clock, the date the assignment check compares against. */
+	LocalDate today() {
+		return BranchTime.localDate(this.clock.instant(), BranchTime.DEFAULT_ZONE);
 	}
 
 	/** A unique email, so tests sharing the database never see each other's users. */
@@ -120,8 +129,7 @@ class IdentityFixtures {
 
 	/** An active SUPPORTING assignment since yesterday plus {@code role} at that Branch. */
 	void assignToBranch(UUID userId, UUID branchId, String role) {
-		LocalDate today = LocalDate.now(BranchTime.DEFAULT_ZONE);
-		addAssignment(userId, branchId, "ACTIVE", today.minusDays(1), null);
+		addAssignment(userId, branchId, "ACTIVE", today().minusDays(1), null);
 		grantBranchRole(userId, branchId, role);
 	}
 
@@ -138,7 +146,13 @@ class IdentityFixtures {
 		this.jdbc.sql("""
 				UPDATE stf_staff_branch_assignment SET status = 'ENDED', effective_to = ?
 				WHERE branch_id = ? AND staff_id = (SELECT id FROM stf_staff_profile WHERE user_id = ?)
-				""").params(LocalDate.now(BranchTime.DEFAULT_ZONE), id(branchId), id(userId)).update();
+				""").params(today(), id(branchId), id(userId)).update();
+	}
+
+	/** Staff offboarding step one (Staff §16.12): the profile goes INACTIVE, assignments and roles left as they were. */
+	void deactivateStaff(UUID userId) {
+		this.jdbc.sql("UPDATE stf_staff_profile SET status = 'INACTIVE', left_on = ?, updated_at = ? WHERE user_id = ?")
+			.params(today(), Instant.now(), id(userId)).update();
 	}
 
 	void grantBranchRole(UUID userId, UUID branchId, String role) {

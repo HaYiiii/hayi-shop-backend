@@ -32,7 +32,7 @@ class JdbcStaffAssignments implements StaffAssignments {
 		LocalDate today = BranchTime.localDate(Instant.now(this.clock), BranchTime.DEFAULT_ZONE);
 		return this.jdbc.sql("""
 				SELECT a.branch_id FROM stf_staff_branch_assignment a JOIN stf_staff_profile s ON s.id = a.staff_id
-				WHERE s.user_id = ? AND a.status = 'ACTIVE' AND a.effective_from <= ?
+				WHERE s.user_id = ? AND s.status = 'ACTIVE' AND a.status = 'ACTIVE' AND a.effective_from <= ?
 				  AND (a.effective_to IS NULL OR a.effective_to >= ?)
 				""").params(toBytes(userId), today, today)
 			.query((rs, n) -> UuidBinary.fromBytes(rs.getBytes(1)))

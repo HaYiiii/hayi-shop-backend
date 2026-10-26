@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.assertj.core.api.InstanceOfAssertFactories;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,7 +48,13 @@ class BackofficeMeTest {
 
 	@BeforeEach
 	void setUp() {
+		this.clock.freeze();
 		this.auth = new BackofficeAuth(this.mvc, this.clock);
+	}
+
+	@AfterEach
+	void resetClock() {
+		this.clock.reset();
 	}
 
 	@Test
@@ -116,6 +123,17 @@ class BackofficeMeTest {
 
 		assertThat(JsonPath.<List<String>>read(me(session).getContentAsString(), "$.branches[0].roles"))
 			.containsExactly("MANAGER");
+	}
+
+	@Test
+	void inactiveStaffProfileListsNoBranches() throws Exception {
+		UUID userId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(userId, UUID.randomUUID(), "MANAGER");
+		this.fixtures.deactivateStaff(userId);
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<List<Object>>read(body, "$.branches")).isEmpty();
 	}
 
 	@Test

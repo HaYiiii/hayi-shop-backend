@@ -12,6 +12,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import vn.hayi.shop.identity.application.EffectiveAccess.BranchAccess;
 import vn.hayi.shop.identity.infrastructure.RoleGrantQueries;
@@ -24,9 +25,13 @@ import vn.hayi.shop.staff.api.StaffAssignments;
 /**
  * Effective permission (Identity §2.7): permissions of the STORE roles, plus at Branch X those of the BRANCH roles at X
  * when the user has an active staff assignment at X (Decision A). Resolved from the database on every call, no cache
- * (Decision M3), so a role or assignment change applies to the next request.
+ * (Decision M3), so a role or assignment change applies to the next request. The role and assignment reads share one
+ * read-only transaction, so a change landing between them cannot mix two states; this relies on InnoDB's default
+ * {@code REPEATABLE READ}, where the snapshot is taken at the first read ({@code READ COMMITTED} would not hold it). On the class, not on
+ * {@link #resolve}: {@link #evaluate} calls it through {@code this}, past the proxy.
  */
 @Service
+@Transactional(readOnly = true)
 public class AccessService implements PermissionEvaluator {
 
 	private static final Map<String, Permission> BY_CODE = Arrays.stream(Permission.values())
