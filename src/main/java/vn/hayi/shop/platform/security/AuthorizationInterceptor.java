@@ -39,16 +39,13 @@ final class AuthorizationInterceptor implements HandlerInterceptor {
 			// A malformed id names no Branch the caller may see; the permission was still checked first (Decision M1).
 			decision = AccessDecision.BRANCH_SCOPE_DENIED;
 		}
-		switch (decision) {
-			case GRANTED -> {
-				return true;
-			}
+		return switch (decision) {
+			case GRANTED -> true;
 			case PERMISSION_DENIED ->
 				throw new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission " + permission);
 			case BRANCH_SCOPE_DENIED ->
 				throw new DomainException(CommonErrorCode.BRANCH_SCOPE_DENIED, "Branch outside the caller's scope");
-		}
-		throw new IllegalStateException("Unknown decision " + decision);
+		};
 	}
 
 	@SuppressWarnings("unchecked")
