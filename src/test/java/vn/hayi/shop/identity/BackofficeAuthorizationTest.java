@@ -8,6 +8,7 @@ import static vn.hayi.shop.identity.BackofficeLoginTest.assertProblem;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,9 +61,15 @@ class BackofficeAuthorizationTest {
 
 	@BeforeEach
 	void setUp() {
+		this.clock.freeze();
 		this.auth = new BackofficeAuth(this.mvc, this.clock);
 		this.branchA = UUID.randomUUID();
 		this.branchB = UUID.randomUUID();
+	}
+
+	@AfterEach
+	void resetClock() {
+		this.clock.reset();
 	}
 
 	@Test
