@@ -119,6 +119,17 @@ class BackofficeMeTest {
 	}
 
 	@Test
+	void inactiveStaffProfileListsNoBranches() throws Exception {
+		UUID userId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(userId, UUID.randomUUID(), "MANAGER");
+		this.fixtures.deactivateStaff(userId);
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<List<Object>>read(body, "$.branches")).isEmpty();
+	}
+
+	@Test
 	void meNeedsSession() throws Exception {
 		assertProblem(this.mvc.perform(get(BackofficeAuth.AUTH + "/me")).andReturn().getResponse(), 401, "AUTH_REQUIRED");
 	}

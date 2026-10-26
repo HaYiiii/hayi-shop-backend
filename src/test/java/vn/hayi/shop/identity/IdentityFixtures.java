@@ -141,6 +141,12 @@ class IdentityFixtures {
 				""").params(LocalDate.now(BranchTime.DEFAULT_ZONE), id(branchId), id(userId)).update();
 	}
 
+	/** Staff offboarding step one (Staff §16.12): the profile goes INACTIVE, assignments and roles left as they were. */
+	void deactivateStaff(UUID userId) {
+		this.jdbc.sql("UPDATE stf_staff_profile SET status = 'INACTIVE', updated_at = ? WHERE user_id = ?")
+			.params(Instant.now(), id(userId)).update();
+	}
+
 	void grantBranchRole(UUID userId, UUID branchId, String role) {
 		this.jdbc.sql("""
 				INSERT INTO iam_user_branch_role (id, user_id, branch_id, role_id, granted_at)

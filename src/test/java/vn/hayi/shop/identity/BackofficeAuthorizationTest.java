@@ -203,6 +203,18 @@ class BackofficeAuthorizationTest {
 	}
 
 	@Test
+	void inactiveStaffProfileLosesBranchAccessOnNextRequest() throws Exception {
+		UUID userId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(userId, this.branchA, "MANAGER");
+		Session session = this.fixtures.openSession(userId);
+		assertThat(orders(session, this.branchA).getStatus()).isEqualTo(204);
+
+		this.fixtures.deactivateStaff(userId);
+
+		assertProblem(orders(session, this.branchA), 403, "PERMISSION_DENIED");
+	}
+
+	@Test
 	void revokedStoreRoleIsDeniedOnNextRequest() throws Exception {
 		UUID userId = this.fixtures.storeAdmin(IdentityFixtures.uniqueEmail());
 		Session session = this.fixtures.openSession(userId);
