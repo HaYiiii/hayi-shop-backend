@@ -33,6 +33,9 @@ class IdentityFixtures {
 	/** Base32 TOTP secret of every fixture user with MFA, as their authenticator app holds it. */
 	static final String TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
+	/** {@code full_name} of every {@link #branchStaff()} profile. */
+	static final String STAFF_FULL_NAME = "Nhân viên test";
+
 	private final JdbcClient jdbc;
 
 	private final PasswordEncoder passwordEncoder;
@@ -121,8 +124,9 @@ class IdentityFixtures {
 		Instant now = Instant.now();
 		this.jdbc.sql("""
 				INSERT INTO stf_staff_profile (id, user_id, employee_code, full_name, status, created_at, updated_at)
-				VALUES (?, ?, ?, 'Nhân viên test', 'ACTIVE', ?, ?)
-				""").params(id(UuidV7.generate()), id(userId), "E" + UUID.randomUUID().toString().substring(0, 8), now, now)
+				VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)
+				""").params(id(UuidV7.generate()), id(userId), "E" + UUID.randomUUID().toString().substring(0, 8),
+					STAFF_FULL_NAME, now, now)
 			.update();
 		return userId;
 	}
@@ -192,6 +196,12 @@ class IdentityFixtures {
 				""").params(id(sessionId), id(userId), now, now, now.plusSeconds(3600)).update();
 		return new Session(this.tokens.issueAccessToken(Surface.BACKOFFICE, userId, sessionId), null,
 				this.csrfTokens.issue(sessionId));
+	}
+
+	/** Drops the user's EMAIL identifier, like staff who log in by employee code only. */
+	void removeEmail(UUID userId) {
+		this.jdbc.sql("DELETE FROM iam_login_identifier WHERE user_id = ? AND identifier_type = 'EMAIL'")
+			.param(id(userId)).update();
 	}
 
 	/** Turns the user's MFA off, like a Manager who never enabled it (Decision D4). */
