@@ -27,8 +27,9 @@ import vn.hayi.shop.identity.BackofficeAuth.Session;
 import vn.hayi.shop.platform.security.Permission;
 
 /**
- * {@code GET /auth/me} lists the caller's roles and permissions per Branch for the UI guard (API 01-security §6.2,
- * Decision M4), resolved live.
+ * {@code GET /auth/me} lists the caller's roles and permissions per Branch for the UI guard, plus email, display name
+ * and MFA enrollment for the account header and the step-up dialog (API 01-security §6.2, §8, Decision M4), resolved
+ * live.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -134,6 +135,63 @@ class BackofficeMeTest {
 		String body = me(this.fixtures.openSession(userId)).getContentAsString();
 
 		assertThat(JsonPath.<List<Object>>read(body, "$.branches")).isEmpty();
+	}
+
+	@Test
+	void storeAdminWithoutStaffProfileHasEmailButNoDisplayName() throws Exception {
+		String email = IdentityFixtures.uniqueEmail();
+		UUID userId = this.fixtures.storeAdmin(email);
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.email")).isEqualTo(email);
+		assertThat(JsonPath.<Object>read(body, "$.displayName")).isNull();
+	}
+
+	@Test
+	void staffSeesFullNameAsDisplayName() throws Exception {
+		UUID userId = this.fixtures.branchStaff();
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.displayName")).isEqualTo(IdentityFixtures.STAFF_FULL_NAME);
+	}
+
+	@Test
+	void mfaEnrolledOnceEnrollmentIsConfirmed() throws Exception {
+		String email = IdentityFixtures.uniqueEmail();
+		UUID userId = this.fixtures.storeAdminWithoutMfa(email);
+		assertThat(JsonPath.<Boolean>read(me(this.fixtures.openSession(userId)).getContentAsString(), "$.mfaEnrolled"))
+			.isFalse();
+
+		String token = JsonPath.read(this.auth.login(email, IdentityFixtures.PASSWORD).getContentAsString(),
+				"$.enrollmentToken");
+		String secret = JsonPath.read(this.auth.startEnrollment(token).getContentAsString(), "$.secret");
+		MockHttpServletResponse confirm = this.auth.confirmEnrollment(token,
+				BackofficeAuth.totp(secret, this.clock.instant()));
+		assertThat(confirm.getStatus()).as(confirm.getContentAsString()).isEqualTo(200);
+
+		assertThat(JsonPath.<Boolean>read(me(Session.from(confirm)).getContentAsString(), "$.mfaEnrolled")).isTrue();
+	}
+
+	@Test
+	void staffWithoutEmailIdentifierHasNullEmail() throws Exception {
+		UUID userId = this.fixtures.branchStaff();
+		this.fixtures.removeEmail(userId);
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<Object>read(body, "$.email")).isNull();
+	}
+
+	@Test
+	void disabledMfaIsNotEnrolledSoStepUpAsksForPassword() throws Exception {
+		UUID userId = this.fixtures.storeAdmin(IdentityFixtures.uniqueEmail());
+		this.fixtures.disableMfa(userId);
+
+		String body = me(this.fixtures.openSession(userId)).getContentAsString();
+
+		assertThat(JsonPath.<Boolean>read(body, "$.mfaEnrolled")).isFalse();
 	}
 
 	@Test

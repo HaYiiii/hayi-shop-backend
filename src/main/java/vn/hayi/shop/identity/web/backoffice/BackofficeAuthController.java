@@ -14,6 +14,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import vn.hayi.shop.identity.application.AccessService;
+import vn.hayi.shop.identity.application.BackofficeAccount;
+import vn.hayi.shop.identity.application.BackofficeAccountService;
 import vn.hayi.shop.identity.application.EffectiveAccess;
 import vn.hayi.shop.identity.application.FirstPasswordChangeService;
 import vn.hayi.shop.identity.application.LoginResult;
@@ -72,12 +74,14 @@ class BackofficeAuthController implements AuthApi {
 
 	private final AccessService access;
 
+	private final BackofficeAccountService accounts;
+
 	private final HttpServletRequest request;
 
 	BackofficeAuthController(LoginService login, FirstPasswordChangeService firstPasswordChange,
 			MfaVerificationService mfaVerification, MfaEnrollmentService mfaEnrollment, StepUpService stepUp,
 			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, AccessService access,
-			HttpServletRequest request) {
+			BackofficeAccountService accounts, HttpServletRequest request) {
 		this.login = login;
 		this.firstPasswordChange = firstPasswordChange;
 		this.mfaVerification = mfaVerification;
@@ -87,6 +91,7 @@ class BackofficeAuthController implements AuthApi {
 		this.cookies = cookies;
 		this.csrfTokens = csrfTokens;
 		this.access = access;
+		this.accounts = accounts;
 		this.request = request;
 	}
 
@@ -177,14 +182,16 @@ class BackofficeAuthController implements AuthApi {
 
 	@Override
 	public ResponseEntity<BackofficeMeDto> getMe() {
-		EffectiveAccess effective = this.access.resolve(AuthenticatedSession.require().userId());
+		UUID userId = AuthenticatedSession.require().userId();
+		EffectiveAccess effective = this.access.resolve(userId);
+		BackofficeAccount account = this.accounts.account(userId);
 		List<BranchAccessDto> branches = effective.branches().entrySet().stream()
 			.sorted(Map.Entry.comparingByKey())
 			.map(branch -> new BranchAccessDto(branch.getKey(), sorted(branch.getValue().roles()),
 					names(effective.permissionsAt(branch.getKey()))))
 			.toList();
-		return ResponseEntity.ok(new BackofficeMeDto(effective.userId(), sorted(effective.storeRoles()),
-				names(effective.storePermissions()), branches));
+		return ResponseEntity.ok(new BackofficeMeDto(effective.userId(), account.email(), account.displayName(),
+				account.mfaEnrolled(), sorted(effective.storeRoles()), names(effective.storePermissions()), branches));
 	}
 
 	private static List<String> names(Collection<Permission> permissions) {
