@@ -2,6 +2,7 @@ package vn.hayi.shop.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static vn.hayi.shop.identity.BackofficeLoginTest.assertProblem;
 
 import java.util.Map;
@@ -82,6 +83,15 @@ class OwnerBootstrapTest {
 				BackofficeAuth.totp(secret, this.clock.instant()));
 		assertThat(enrolled.getStatus()).as(enrolled.getContentAsString()).isEqualTo(200);
 		assertThat(enrolled.getCookie("hy_b_at")).isNotNull();
+
+		// The account header and step-up dialog (API 01-security §6.2, Decision M4): no StaffProfile yet, MFA on.
+		MockHttpServletResponse meResponse = this.auth.perform(get(BackofficeAuth.AUTH + "/me"),
+				BackofficeAuth.Session.from(enrolled), false);
+		assertThat(meResponse.getStatus()).as(meResponse.getContentAsString()).isEqualTo(200);
+		String me = meResponse.getContentAsString();
+		assertThat(JsonPath.<String>read(me, "$.email")).isEqualTo(email);
+		assertThat(JsonPath.<Object>read(me, "$.displayName")).isNull();
+		assertThat(JsonPath.<Boolean>read(me, "$.mfaEnrolled")).isTrue();
 	}
 
 	@Test
