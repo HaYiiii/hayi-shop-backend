@@ -147,7 +147,7 @@ public class IdentityFixtures {
 				""").params(id(UuidV7.generate()), id(branchId), status, from, to, now, now, id(userId)).update();
 	}
 
-	void endAssignment(UUID userId, UUID branchId) {
+	public void endAssignment(UUID userId, UUID branchId) {
 		this.jdbc.sql("""
 				UPDATE stf_staff_branch_assignment SET status = 'ENDED', effective_to = ?
 				WHERE branch_id = ? AND staff_id = (SELECT id FROM stf_staff_profile WHERE user_id = ?)

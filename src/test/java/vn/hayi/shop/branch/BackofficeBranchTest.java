@@ -4,9 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -102,11 +108,38 @@ class BackofficeBranchTest {
 	}
 
 	@Test
+	void concurrentCreatesOfOneCodeYieldOneBranch() throws Exception {
+		String code = uniqueCode();
+		CountDownLatch start = new CountDownLatch(1);
+		try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+			List<Future<Integer>> results = new ArrayList<>();
+			for (int i = 0; i < 2; i++) {
+				results.add(pool.submit(() -> {
+					start.await();
+					return create(this.admin, minimal(code)).getStatus();
+				}));
+			}
+			start.countDown();
+			List<Integer> statuses = new ArrayList<>();
+			for (Future<Integer> result : results) {
+				statuses.add(result.get(30, TimeUnit.SECONDS));
+			}
+			assertThat(statuses).containsExactlyInAnyOrder(201, 409);
+		}
+	}
+
+	@Test
 	void createNeedsNameAndWellFormedCode() throws Exception {
 		assertProblem(create(this.admin, """
 				{"branchCode": "%s", "address": {"line": "1 Lê Lợi", "province": "TP.HCM"}}
 				""".formatted(uniqueCode())), 400, "VALIDATION_FAILED");
 		assertProblem(create(this.admin, minimal("-BAD CODE")), 400, "VALIDATION_FAILED");
+		assertProblem(create(this.admin, """
+				{"branchCode": "%s", "name": "   ", "address": {"line": "1 Lê Lợi", "province": "TP.HCM"}}
+				""".formatted(uniqueCode())), 400, "VALIDATION_FAILED");
+		assertProblem(create(this.admin, """
+				{"branchCode": "%s", "name": "HaYi test", "address": {"line": "1 Lê Lợi", "province": " "}}
+				""".formatted(uniqueCode())), 400, "VALIDATION_FAILED");
 	}
 
 	@Test
@@ -169,6 +202,20 @@ class BackofficeBranchTest {
 		String body = list(this.fixtures.openSession(managerId), "").getContentAsString();
 
 		assertThat(JsonPath.<List<String>>read(body, "$.items[*].branchId")).containsExactly(assigned);
+	}
+
+	@Test
+	void endedAssignmentDropsBranchFromList() throws Exception {
+		String branchId = createdId(uniqueCode());
+		UUID managerId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(managerId, UUID.fromString(branchId), "MANAGER");
+		Session manager = this.fixtures.openSession(managerId);
+		assertThat(JsonPath.<List<String>>read(list(manager, "").getContentAsString(), "$.items[*].branchId"))
+			.containsExactly(branchId);
+
+		this.fixtures.endAssignment(managerId, UUID.fromString(branchId));
+
+		assertProblem(this.auth.perform(get(BRANCHES), manager, false), 403, "PERMISSION_DENIED");
 	}
 
 	@Test

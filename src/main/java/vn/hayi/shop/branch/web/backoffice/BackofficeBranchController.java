@@ -25,6 +25,7 @@ import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.web.spec.backoffice.api.BranchesApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.AddressInputDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchCreateRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListDto;
@@ -82,7 +83,7 @@ class BackofficeBranchController implements BranchesApi {
 	}
 
 	private static NewBranch toNewBranch(BranchCreateRequestDto body) {
-		AddressDto address = body.getAddress();
+		AddressInputDto address = body.getAddress();
 		GeoPointDto location = body.getLocation();
 		return new NewBranch(body.getBranchCode(), body.getName(), address.getLine(), address.getWard(),
 				address.getDistrict(), address.getProvince(), (location != null) ? location.getLat() : null,

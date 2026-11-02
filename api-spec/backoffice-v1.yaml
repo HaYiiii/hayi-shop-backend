@@ -361,12 +361,22 @@ components:
       description: Lifecycle (Branch §4.3); `ACTIVE` does not mean open now.
     Address:
       type: object
+      description: A Branch address as read; every key present, `ward`/`district` may be `null`.
       required: [line, ward, district, province]
       properties:
-        line: { type: string, minLength: 1, maxLength: 255 }
+        line: { type: string }
+        ward: { type: [string, 'null'] }
+        district: { type: [string, 'null'] }
+        province: { type: string }
+    AddressInput:
+      type: object
+      description: Required `line` and `province` (ERD 03); `ward`/`district` optional (API 09 §1.1).
+      required: [line, province]
+      properties:
+        line: { type: string, minLength: 1, maxLength: 255, pattern: '[\s\S]*\S[\s\S]*' }
         ward: { type: [string, 'null'], maxLength: 128 }
         district: { type: [string, 'null'], maxLength: 128 }
-        province: { type: string, minLength: 1, maxLength: 128 }
+        province: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
     GeoPoint:
       type: object
       required: [lat, lng]
@@ -381,8 +391,8 @@ components:
           type: string
           pattern: '^[A-Za-z0-9][A-Za-z0-9-]{1,31}$'
           description: Upper-cased by the server; unique and never reused.
-        name: { type: string, minLength: 1, maxLength: 128 }
-        address: { $ref: '#/components/schemas/Address' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
+        address: { $ref: '#/components/schemas/AddressInput' }
         location:
           oneOf:
             - $ref: '#/components/schemas/GeoPoint'
