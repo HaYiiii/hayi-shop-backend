@@ -24,9 +24,10 @@ import vn.hayi.shop.shared.id.UuidV7;
  * provisioning flow that does not exist yet. Users get role ADMIN (STORE scope), leaving OWNER to the bootstrap, and
  * an active TOTP factor with {@link #TOTP_SECRET} unless created without MFA. Branch staff get a StaffProfile, an
  * assignment and a BRANCH role; their sessions are opened directly, since staff login arrives with staff provisioning.
+ * Other modules' Backoffice tests use the public methods to get an authorized caller.
  */
 @TestComponent
-class IdentityFixtures {
+public class IdentityFixtures {
 
 	static final String PASSWORD = "correct horse battery staple";
 
@@ -64,11 +65,11 @@ class IdentityFixtures {
 	}
 
 	/** A unique email, so tests sharing the database never see each other's users. */
-	static String uniqueEmail() {
+	public static String uniqueEmail() {
 		return "admin-" + UUID.randomUUID() + "@hayi.test";
 	}
 
-	UUID storeAdmin(String email) {
+	public UUID storeAdmin(String email) {
 		return storeAdmin(email, PASSWORD, false);
 	}
 
@@ -119,7 +120,7 @@ class IdentityFixtures {
 	}
 
 	/** A staff member with a StaffProfile, no STORE role and no Branch yet: see {@link #assignToBranch}. */
-	UUID branchStaff() {
+	public UUID branchStaff() {
 		UUID userId = userWithoutRole("staff-" + UUID.randomUUID() + "@hayi.test", PASSWORD, false);
 		Instant now = Instant.now();
 		this.jdbc.sql("""
@@ -132,7 +133,7 @@ class IdentityFixtures {
 	}
 
 	/** An active SUPPORTING assignment since yesterday plus {@code role} at that Branch. */
-	void assignToBranch(UUID userId, UUID branchId, String role) {
+	public void assignToBranch(UUID userId, UUID branchId, String role) {
 		addAssignment(userId, branchId, "ACTIVE", today().minusDays(1), null);
 		grantBranchRole(userId, branchId, role);
 	}
@@ -146,7 +147,7 @@ class IdentityFixtures {
 				""").params(id(UuidV7.generate()), id(branchId), status, from, to, now, now, id(userId)).update();
 	}
 
-	void endAssignment(UUID userId, UUID branchId) {
+	public void endAssignment(UUID userId, UUID branchId) {
 		this.jdbc.sql("""
 				UPDATE stf_staff_branch_assignment SET status = 'ENDED', effective_to = ?
 				WHERE branch_id = ? AND staff_id = (SELECT id FROM stf_staff_profile WHERE user_id = ?)
@@ -187,7 +188,7 @@ class IdentityFixtures {
 	}
 
 	/** A live Backoffice session with its access and CSRF cookies, as a completed login would leave them. */
-	Session openSession(UUID userId) {
+	public Session openSession(UUID userId) {
 		UUID sessionId = UuidV7.generate();
 		Instant now = Instant.now();
 		this.jdbc.sql("""

@@ -5,9 +5,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import vn.hayi.shop.platform.security.AccessDecision;
 import vn.hayi.shop.platform.security.Permission;
+import vn.hayi.shop.platform.security.PermissionScope;
 
 /**
  * What a Backoffice user may do (Identity §2.7, Decision A, M2): STORE roles apply at every Branch; BRANCH roles only
@@ -54,6 +56,17 @@ public record EffectiveAccess(UUID userId, Set<String> storeRoles, Set<Permissio
 	/** A STORE role sees every Branch; otherwise only the Branches with a BRANCH role in effect. */
 	boolean inScope(UUID branchId) {
 		return !this.storeRoles.isEmpty() || this.branches.containsKey(branchId);
+	}
+
+	/** Every Branch when a STORE role grants the permission, else the Branches whose BRANCH roles grant it. */
+	public PermissionScope scopeOf(Permission permission) {
+		if (this.storePermissions.contains(permission)) {
+			return PermissionScope.all();
+		}
+		return PermissionScope.only(this.branches.entrySet().stream()
+			.filter(branch -> branch.getValue().permissions().contains(permission))
+			.map(Map.Entry::getKey)
+			.collect(Collectors.toSet()));
 	}
 
 	/** Every permission at {@code branchId}, STORE permissions included (what {@code /auth/me} lists, Decision M4). */

@@ -12,4 +12,7 @@ public interface PermissionEvaluator {
 
 	AccessDecision evaluate(UUID userId, Permission permission, Optional<UUID> branchId);
 
+	/** The Branches where the user holds {@code permission}, for an endpoint without {@code {branchId}}. */
+	PermissionScope scopeOf(UUID userId, Permission permission);
+
 }

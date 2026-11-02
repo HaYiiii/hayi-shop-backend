@@ -20,6 +20,7 @@ import vn.hayi.shop.identity.infrastructure.RoleGrantQueries.RoleGrant;
 import vn.hayi.shop.platform.security.AccessDecision;
 import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.PermissionEvaluator;
+import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.staff.api.StaffAssignments;
 
 /**
@@ -49,6 +50,11 @@ public class AccessService implements PermissionEvaluator {
 	@Override
 	public AccessDecision evaluate(UUID userId, Permission permission, Optional<UUID> branchId) {
 		return resolve(userId).decide(permission, branchId);
+	}
+
+	@Override
+	public PermissionScope scopeOf(UUID userId, Permission permission) {
+		return resolve(userId).scopeOf(permission);
 	}
 
 	public EffectiveAccess resolve(UUID userId) {
