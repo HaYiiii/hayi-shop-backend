@@ -2,7 +2,9 @@ package vn.hayi.shop.branch.application;
 
 import java.time.Clock;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -17,6 +19,7 @@ import vn.hayi.shop.branch.domain.BranchAddress;
 import vn.hayi.shop.branch.domain.BranchErrorCode;
 import vn.hayi.shop.branch.domain.BranchRepository;
 import vn.hayi.shop.branch.domain.GeoPoint;
+import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.error.DomainException;
 
@@ -64,6 +67,20 @@ public class BranchService {
 		return this.branches.findById(branchId)
 			.map(BranchView::of)
 			.orElseThrow(() -> new DomainException(BranchErrorCode.BRANCH_NOT_FOUND, "No Branch " + branchId));
+	}
+
+	/**
+	 * The Branches in {@code scope}, sorted by code; {@code statuses} empty means every status. A small fixed list,
+	 * not paged (API 09 §1.1).
+	 */
+	@Transactional(readOnly = true)
+	public List<BranchView> list(PermissionScope scope, Set<String> statuses) {
+		List<Branch> visible = scope.everyBranch() ? this.branches.findAllByOrderByBranchCode()
+				: this.branches.findByIdInOrderByBranchCode(scope.branchIds());
+		return visible.stream()
+			.filter(branch -> statuses.isEmpty() || statuses.contains(branch.getStatus().name()))
+			.map(BranchView::of)
+			.toList();
 	}
 
 	private static Map<String, Object> snapshot(Branch branch) {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -144,6 +145,46 @@ class BackofficeBranchTest {
 
 		assertThat(detail(manager, assigned).getStatus()).isEqualTo(200);
 		assertProblem(detail(manager, other), 403, "BRANCH_SCOPE_DENIED");
+	}
+
+	@Test
+	void storeAdminListsEveryBranchSortedByCode() throws Exception {
+		String second = createdId("T-ZZ" + uniqueCode().substring(2));
+		String first = createdId("T-AA" + uniqueCode().substring(2));
+
+		String body = list(this.admin, "").getContentAsString();
+
+		assertThat(JsonPath.<List<String>>read(body, "$.items[*].branchId")).contains(first, second);
+		List<String> codes = JsonPath.read(body, "$.items[*].branchCode");
+		assertThat(codes).isSorted();
+	}
+
+	@Test
+	void managerListsOnlyAssignedBranches() throws Exception {
+		String assigned = createdId(uniqueCode());
+		createdId(uniqueCode());
+		UUID managerId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(managerId, UUID.fromString(assigned), "MANAGER");
+
+		String body = list(this.fixtures.openSession(managerId), "").getContentAsString();
+
+		assertThat(JsonPath.<List<String>>read(body, "$.items[*].branchId")).containsExactly(assigned);
+	}
+
+	@Test
+	void listFiltersByStatus() throws Exception {
+		String draft = createdId(uniqueCode());
+
+		assertThat(JsonPath.<List<String>>read(list(this.admin, "?status=DRAFT").getContentAsString(),
+				"$.items[*].branchId")).contains(draft);
+		assertThat(JsonPath.<List<String>>read(list(this.admin, "?status=ACTIVE,CLOSED").getContentAsString(),
+				"$.items[*].branchId")).doesNotContain(draft);
+	}
+
+	private MockHttpServletResponse list(Session session, String query) throws Exception {
+		MockHttpServletResponse response = this.auth.perform(get(BRANCHES + query), session, false);
+		assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
+		return response;
 	}
 
 	private String createdId(String code) throws Exception {

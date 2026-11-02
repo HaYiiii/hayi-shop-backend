@@ -5,7 +5,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -18,6 +20,8 @@ import vn.hayi.shop.branch.application.NewBranch;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.Permission;
+import vn.hayi.shop.platform.security.PermissionEvaluator;
+import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.web.spec.backoffice.api.BranchesApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressDto;
@@ -36,10 +40,13 @@ class BackofficeBranchController implements BranchesApi {
 
 	private final BranchService branches;
 
+	private final PermissionEvaluator permissions;
+
 	private final HttpServletRequest request;
 
-	BackofficeBranchController(BranchService branches, HttpServletRequest request) {
+	BackofficeBranchController(BranchService branches, PermissionEvaluator permissions, HttpServletRequest request) {
 		this.branches = branches;
+		this.permissions = permissions;
 		this.request = request;
 	}
 
@@ -63,7 +70,15 @@ class BackofficeBranchController implements BranchesApi {
 	@Override
 	@RequiresPermission(Permission.BRANCH_VIEW)
 	public ResponseEntity<BranchListDto> listBranches(List<BranchStatusDto> status) {
-		throw new UnsupportedOperationException("BE #38: next slice");
+		// A cross-Branch view filters its own data to the caller's scope (Decision M1).
+		PermissionScope scope = this.permissions.scopeOf(AuthenticatedSession.require().userId(),
+				Permission.BRANCH_VIEW);
+		Set<String> statuses = (status != null)
+				? status.stream().map(BranchStatusDto::getValue).collect(Collectors.toSet()) : Set.of();
+		List<BranchDto> items = this.branches.list(scope, statuses).stream()
+			.map(BackofficeBranchController::toDto)
+			.toList();
+		return ResponseEntity.ok(new BranchListDto(items));
 	}
 
 	private static NewBranch toNewBranch(BranchCreateRequestDto body) {

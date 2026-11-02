@@ -1,5 +1,7 @@
 package vn.hayi.shop.branch.domain;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -13,5 +15,9 @@ public interface BranchRepository extends Repository<Branch, UUID> {
 	Optional<Branch> findById(UUID id);
 
 	boolean existsByBranchCode(String branchCode);
+
+	List<Branch> findAllByOrderByBranchCode();
+
+	List<Branch> findByIdInOrderByBranchCode(Collection<UUID> ids);
 
 }
