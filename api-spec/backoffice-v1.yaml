@@ -18,6 +18,8 @@ servers:
 tags:
   - name: Auth
     description: Backoffice login, MFA, step-up, session, CSRF and the caller's access (API 01-security §5–6, §8, Decision K, L, M)
+  - name: Branches
+    description: Branch identity, lifecycle and business hours (Branch §4, API 09 §1)
 security:
   - accessCookie: []
 paths:
@@ -239,6 +241,81 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BackofficeMe' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /branches:
+    get:
+      tags: [Branches]
+      operationId: listBranches
+      summary: Branches in the caller's scope
+      description: |
+        `BRANCH_VIEW`. STORE roles (Owner/Admin) see every Branch; a BRANCH role sees only the Branches where it is in
+        effect (Decision M1, M2). Small fixed list: not paged, sorted by `branchCode` (API 09 §1.1).
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Only Branches in these statuses, e.g. `status=ACTIVE,DRAFT`.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/BranchStatus' }
+      responses:
+        '200':
+          description: The visible Branches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Branches]
+      operationId: createBranch
+      summary: Create a Branch in DRAFT
+      description: |
+        `BRANCH_MANAGE`. The new Branch starts `DRAFT` (Branch §4.3). `branchCode` is upper-cased, unique and never
+        reused: taken, in any case → `409 BRANCH_CODE_TAKEN`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BranchCreateRequest' }
+      responses:
+        '201':
+          description: The created Branch.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: URL of the new Branch.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /branches/{branchId}:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [Branches]
+      operationId: getBranch
+      summary: One Branch
+      description: '`BRANCH_VIEW` at that Branch.'
+      responses:
+        '200':
+          description: The Branch.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     accessCookie:
@@ -262,13 +339,84 @@ components:
       required: false
       description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
+    BranchId:
+      name: branchId
+      in: path
+      required: true
+      description: A malformed id is outside every scope → `403 BRANCH_SCOPE_DENIED` (Decision M1).
+      schema: { type: string, format: uuid }
   headers:
     SetCookie:
       description: Auth cookies (API 01-security §3).
       schema: { type: string }
+    ETag:
+      description: '`"v{version}"` of the resource (API README §8).'
+      schema: { type: string }
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    BranchStatus:
+      type: string
+      enum: [DRAFT, ACTIVE, INACTIVE, CLOSED]
+      description: Lifecycle (Branch §4.3); `ACTIVE` does not mean open now.
+    Address:
+      type: object
+      required: [line, ward, district, province]
+      properties:
+        line: { type: string, minLength: 1, maxLength: 255 }
+        ward: { type: [string, 'null'], maxLength: 128 }
+        district: { type: [string, 'null'], maxLength: 128 }
+        province: { type: string, minLength: 1, maxLength: 128 }
+    GeoPoint:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+    BranchCreateRequest:
+      type: object
+      required: [branchCode, name, address]
+      properties:
+        branchCode:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9-]{1,31}$'
+          description: Upper-cased by the server; unique and never reused.
+        name: { type: string, minLength: 1, maxLength: 128 }
+        address: { $ref: '#/components/schemas/Address' }
+        location:
+          oneOf:
+            - $ref: '#/components/schemas/GeoPoint'
+            - type: 'null'
+        phone: { type: [string, 'null'], maxLength: 20 }
+        email: { type: [string, 'null'], format: email, maxLength: 255 }
+    Branch:
+      type: object
+      required: [branchId, branchCode, name, status, address, location, phone, email, timezone, activatedAt, closedAt,
+        createdAt, version]
+      properties:
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/BranchStatus' }
+        address: { $ref: '#/components/schemas/Address' }
+        location:
+          oneOf:
+            - $ref: '#/components/schemas/GeoPoint'
+            - type: 'null'
+        phone: { type: [string, 'null'] }
+        email: { type: [string, 'null'] }
+        timezone: { type: string, description: 'Always `Asia/Ho_Chi_Minh`.' }
+        activatedAt: { type: [string, 'null'], format: date-time }
+        closedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        version: { type: integer, format: int64, description: 'Same value as the `ETag`.' }
+    BranchList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Branch' }
     LoginRequest:
       type: object
       required: [identifier, password]
@@ -438,6 +586,16 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
       description: '`CSRF_INVALID`, `PERMISSION_DENIED`, `BRANCH_SCOPE_DENIED`, `STEP_UP_REQUIRED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: '`BRANCH_NOT_FOUND`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: '`BRANCH_CODE_TAKEN`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
