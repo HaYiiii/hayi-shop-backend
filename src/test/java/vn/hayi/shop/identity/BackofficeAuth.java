@@ -24,7 +24,7 @@ import vn.hayi.shop.identity.domain.Totp;
  * Drives the Backoffice auth endpoints over HTTP like the browser does: cookies in, cookies out. The authenticator
  * app is simulated from the fixture's TOTP secret and the test clock.
  */
-final class BackofficeAuth {
+public final class BackofficeAuth {
 
 	static final String AUTH = "/api/backoffice/v1/auth";
 
@@ -32,7 +32,7 @@ final class BackofficeAuth {
 
 	private final MutableClock clock;
 
-	BackofficeAuth(MockMvc mvc, MutableClock clock) {
+	public BackofficeAuth(MockMvc mvc, MutableClock clock) {
 		this.mvc = mvc;
 		this.clock = clock;
 	}
@@ -137,8 +137,8 @@ final class BackofficeAuth {
 		return perform(get(AUTH + "/csrf"), session, false);
 	}
 
-	MockHttpServletResponse perform(MockHttpServletRequestBuilder request, Session session, boolean withCsrfHeader)
-			throws Exception {
+	public MockHttpServletResponse perform(MockHttpServletRequestBuilder request, Session session,
+			boolean withCsrfHeader) throws Exception {
 		session.cookies().forEach(request::cookie);
 		if (withCsrfHeader && session.csrf() != null) {
 			request.header("X-CSRF-Token", session.csrf());
@@ -151,7 +151,7 @@ final class BackofficeAuth {
 	}
 
 	/** Cookie values the browser holds for the Backoffice. */
-	record Session(String access, String refresh, String csrf) {
+	public record Session(String access, String refresh, String csrf) {
 
 		static Session from(MockHttpServletResponse response) {
 			return new Session(value(response, "hy_b_at"), value(response, "hy_b_rt"), value(response, "hy_csrf"));
