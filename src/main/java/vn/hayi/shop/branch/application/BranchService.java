@@ -3,6 +3,7 @@ package vn.hayi.shop.branch.application;
 import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -19,7 +20,7 @@ import vn.hayi.shop.branch.domain.GeoPoint;
 import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.error.DomainException;
 
-/** Creates Branches (Branch §4.2–4.3, API 09 §1), audited in the same transaction. */
+/** Creates and reads Branches (Branch §4.2–4.3, API 09 §1); every creation is audited in the same transaction. */
 @Service
 public class BranchService {
 
@@ -56,6 +57,13 @@ public class BranchService {
 			.withNewValue(snapshot(branch))
 			.withClient(ipAddress, userAgent));
 		return BranchView.of(branch);
+	}
+
+	@Transactional(readOnly = true)
+	public BranchView get(UUID branchId) {
+		return this.branches.findById(branchId)
+			.map(BranchView::of)
+			.orElseThrow(() -> new DomainException(BranchErrorCode.BRANCH_NOT_FOUND, "No Branch " + branchId));
 	}
 
 	private static Map<String, Object> snapshot(Branch branch) {

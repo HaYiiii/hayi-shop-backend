@@ -116,6 +116,46 @@ class BackofficeBranchTest {
 		assertProblem(create(this.fixtures.openSession(managerId), minimal(uniqueCode())), 403, "PERMISSION_DENIED");
 	}
 
+	@Test
+	void branchDetailCarriesETag() throws Exception {
+		String code = uniqueCode();
+		String branchId = createdId(code);
+
+		MockHttpServletResponse detail = detail(this.admin, branchId);
+
+		assertThat(detail.getStatus()).as(detail.getContentAsString()).isEqualTo(200);
+		assertThat(detail.getHeader("ETag")).isEqualTo("\"v0\"");
+		assertThat(JsonPath.<String>read(detail.getContentAsString(), "$.branchCode")).isEqualTo(code);
+		assertThat(JsonPath.<Object>read(detail.getContentAsString(), "$.location")).isNull();
+	}
+
+	@Test
+	void unknownBranchIsNotFound() throws Exception {
+		assertProblem(detail(this.admin, UUID.randomUUID().toString()), 404, "BRANCH_NOT_FOUND");
+	}
+
+	@Test
+	void managerReadsOnlyAssignedBranch() throws Exception {
+		String assigned = createdId(uniqueCode());
+		String other = createdId(uniqueCode());
+		UUID managerId = this.fixtures.branchStaff();
+		this.fixtures.assignToBranch(managerId, UUID.fromString(assigned), "MANAGER");
+		Session manager = this.fixtures.openSession(managerId);
+
+		assertThat(detail(manager, assigned).getStatus()).isEqualTo(200);
+		assertProblem(detail(manager, other), 403, "BRANCH_SCOPE_DENIED");
+	}
+
+	private String createdId(String code) throws Exception {
+		MockHttpServletResponse created = create(this.admin, minimal(code));
+		assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(201);
+		return JsonPath.read(created.getContentAsString(), "$.branchId");
+	}
+
+	private MockHttpServletResponse detail(Session session, String branchId) throws Exception {
+		return this.auth.perform(get(BRANCHES + "/" + branchId), session, false);
+	}
+
 	private MockHttpServletResponse create(Session session, String json) throws Exception {
 		return this.auth.perform(post(BRANCHES).contentType(MediaType.APPLICATION_JSON).content(json), session, true);
 	}

@@ -56,7 +56,8 @@ class BackofficeBranchController implements BranchesApi {
 	@Override
 	@RequiresPermission(Permission.BRANCH_VIEW)
 	public ResponseEntity<BranchDto> getBranch(UUID branchId) {
-		throw new UnsupportedOperationException("BE #38: next slice");
+		BranchView branch = this.branches.get(branchId);
+		return ResponseEntity.ok().eTag(eTag(branch)).body(toDto(branch));
 	}
 
 	@Override
