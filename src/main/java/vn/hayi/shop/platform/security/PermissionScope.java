@@ -21,8 +21,4 @@ public record PermissionScope(boolean everyBranch, Set<UUID> branchIds) {
 		return new PermissionScope(false, branchIds);
 	}
 
-	public boolean includes(UUID branchId) {
-		return this.everyBranch || this.branchIds.contains(branchId);
-	}
-
 }

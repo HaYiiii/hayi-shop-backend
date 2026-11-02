@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,8 @@ import vn.hayi.shop.shared.error.DomainException;
 /** Creates and reads Branches (Branch §4.2–4.3, API 09 §1); every creation is audited in the same transaction. */
 @Service
 public class BranchService {
+
+	private static final String CODE_UNIQUE_KEY = "uk_brn_branch__branch_code";
 
 	private final BranchRepository branches;
 
@@ -53,7 +56,11 @@ public class BranchService {
 					request.email(), this.clock.instant()));
 		}
 		catch (DataIntegrityViolationException ex) {
-			throw codeTaken(code);
+			// A concurrent create took the code after the check above; any other violation is a bug, not a conflict.
+			if (isCodeTaken(ex)) {
+				throw codeTaken(code);
+			}
+			throw ex;
 		}
 		this.audit.record(AuditEntry.of(actor, AuditSource.BACKOFFICE_WEB, "BRANCH_CREATE", "BRANCH", branch.getId())
 			.withBranch(branch.getId())
@@ -89,6 +96,11 @@ public class BranchService {
 		values.put("name", branch.getName());
 		values.put("status", branch.getStatus().name());
 		return values;
+	}
+
+	private static boolean isCodeTaken(DataIntegrityViolationException ex) {
+		String message = NestedExceptionUtils.getMostSpecificCause(ex).getMessage();
+		return message != null && message.contains(CODE_UNIQUE_KEY);
 	}
 
 	private static DomainException codeTaken(String code) {
