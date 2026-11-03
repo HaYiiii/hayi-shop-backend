@@ -2,16 +2,26 @@ package vn.hayi.shop.branch.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
@@ -68,6 +78,15 @@ public class Branch {
 	@Version
 	private long version;
 
+	/** Part of the aggregate (AGGREGATE-MAP): changing it bumps {@code version} like any other edit (Decision Q1). */
+	@OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+	@JoinColumn(name = "branch_id", nullable = false, updatable = false)
+	private List<BranchBusinessHour> weeklyHours = new ArrayList<>();
+
+	@OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+	@JoinColumn(name = "branch_id", nullable = false, updatable = false)
+	private List<BranchHourOverride> hourOverrides = new ArrayList<>();
+
 	protected Branch() {
 	}
 
@@ -98,10 +117,7 @@ public class Branch {
 	 * @throws DomainException {@code BRANCH_INVALID_TRANSITION} once the Branch is {@code CLOSED} (Decision O2)
 	 */
 	public BranchDiff edit(BranchEdit edit, Instant now) {
-		if (this.status == BranchStatus.CLOSED) {
-			throw new DomainException(BranchErrorCode.BRANCH_INVALID_TRANSITION, "Branch " + this.id + " is CLOSED",
-					this.status.name());
-		}
+		requireNotClosed();
 		String newName = requireText(edit.name().applyTo(this.name), "name");
 		String newLine = requireText(edit.addressLine().applyTo(this.addressLine), "address.line");
 		String newProvince = requireText(edit.province().applyTo(this.provinceName), "address.province");
@@ -125,6 +141,101 @@ public class Branch {
 			this.updatedAt = now;
 		}
 		return diff;
+	}
+
+	/** The weekly schedule, by day then opening time; a day without ranges is closed. */
+	public List<WeeklyHours> getWeeklyHours() {
+		return sorted(this.weeklyHours.stream().map(BranchBusinessHour::toWeeklyHours).toList());
+	}
+
+	/** Overrides of {@code from} and later, by date. */
+	public List<DayOverride> getOverridesFrom(LocalDate from) {
+		Map<LocalDate, List<BranchHourOverride>> byDate = new TreeMap<>();
+		this.hourOverrides.stream()
+			.filter(row -> !row.date().isBefore(from))
+			.forEach(row -> byDate.computeIfAbsent(row.date(), date -> new ArrayList<>()).add(row));
+		return byDate.values().stream().map(Branch::toDayOverride).toList();
+	}
+
+	/**
+	 * The actual opening ranges on {@code date} (Branch §4.4, Decision Q5): its override if any, otherwise the weekly
+	 * schedule of that day of week; empty means closed.
+	 */
+	public List<TimeRange> openingHoursOn(LocalDate date) {
+		return overrideOn(date).map(DayOverride::ranges)
+			.orElseGet(() -> getWeeklyHours().stream()
+				.filter(hours -> hours.dayOfWeek() == date.getDayOfWeek().getValue())
+				.map(WeeklyHours::range)
+				.toList());
+	}
+
+	/**
+	 * Replaces the whole week (Decision Q1–Q2). The same ranges in any order are the same week: then nothing changes,
+	 * so the version does not move, and this returns {@code false}.
+	 */
+	public boolean replaceWeeklyHours(List<WeeklyHours> week, Instant now) {
+		requireNotClosed();
+		BusinessHoursRules.checkWeekly(week);
+		if (sorted(week).equals(getWeeklyHours())) {
+			return false;
+		}
+		this.weeklyHours.clear();
+		week.forEach(hours -> this.weeklyHours.add(new BranchBusinessHour(hours)));
+		this.updatedAt = now;
+		return true;
+	}
+
+	private static List<WeeklyHours> sorted(List<WeeklyHours> week) {
+		return week.stream()
+			.sorted(Comparator.comparingInt(WeeklyHours::dayOfWeek).thenComparing(hours -> hours.range().open()))
+			.toList();
+	}
+
+	/** Sets the hours of one date, replacing its override if any, which is returned (Decision Q3). */
+	public Optional<DayOverride> putOverride(DayOverride override, LocalDate today, Instant now) {
+		requireNotClosed();
+		BusinessHoursRules.checkOverride(override, today);
+		Optional<DayOverride> previous = overrideOn(override.date());
+		this.hourOverrides.removeIf(row -> row.date().equals(override.date()));
+		this.hourOverrides.addAll(BranchHourOverride.rowsOf(override, now));
+		this.updatedAt = now;
+		return previous;
+	}
+
+	/**
+	 * Removes the override of {@code date} and returns it.
+	 * @throws DomainException {@code BRANCH_HOURS_OVERRIDE_NOT_FOUND} when that date has none
+	 */
+	public DayOverride removeOverride(LocalDate date, Instant now) {
+		requireNotClosed();
+		DayOverride removed = overrideOn(date).orElseThrow(() -> new DomainException(
+				BranchErrorCode.BRANCH_HOURS_OVERRIDE_NOT_FOUND, "No override on " + date, date.toString()));
+		this.hourOverrides.removeIf(row -> row.date().equals(date));
+		this.updatedAt = now;
+		return removed;
+	}
+
+	private Optional<DayOverride> overrideOn(LocalDate date) {
+		List<BranchHourOverride> rows = this.hourOverrides.stream().filter(row -> row.date().equals(date)).toList();
+		return rows.isEmpty() ? Optional.empty() : Optional.of(toDayOverride(rows));
+	}
+
+	private static DayOverride toDayOverride(List<BranchHourOverride> rows) {
+		BranchHourOverride first = rows.getFirst();
+		List<TimeRange> ranges = rows.stream()
+			.map(BranchHourOverride::range)
+			.filter(Objects::nonNull)
+			.sorted(Comparator.comparing(TimeRange::open))
+			.toList();
+		return new DayOverride(first.date(), first.closed(), ranges, first.reason());
+	}
+
+	/** A {@code CLOSED} Branch is frozen: information and hours alike (Decision O2, Q1). */
+	private void requireNotClosed() {
+		if (this.status == BranchStatus.CLOSED) {
+			throw new DomainException(BranchErrorCode.BRANCH_INVALID_TRANSITION, "Branch " + this.id + " is CLOSED",
+					this.status.name());
+		}
 	}
 
 	/** {@code DRAFT/INACTIVE → ACTIVE}; {@code activatedAt} is the latest activation (Decision P2). */

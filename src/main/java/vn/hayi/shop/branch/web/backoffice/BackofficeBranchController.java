@@ -3,8 +3,11 @@ package vn.hayi.shop.branch.web.backoffice;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -16,10 +19,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import tools.jackson.databind.JsonNode;
+import vn.hayi.shop.branch.api.OpeningInterval;
 import vn.hayi.shop.branch.application.BranchChanges;
+import vn.hayi.shop.branch.application.BranchHoursService;
+import vn.hayi.shop.branch.application.BranchHoursView;
+import vn.hayi.shop.branch.application.HourOverrideRequest;
 import vn.hayi.shop.branch.application.BranchService;
 import vn.hayi.shop.branch.application.BranchView;
 import vn.hayi.shop.branch.application.NewBranch;
+import vn.hayi.shop.branch.application.WeeklyIntervalRequest;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.Permission;
@@ -32,6 +40,7 @@ import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.BranchesApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressInputDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchBusinessHoursDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchClosureCheckDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchCommitmentTypeDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchConflictDto;
@@ -39,7 +48,12 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.BranchCreateRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchStatusDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BusinessHoursReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.GeoPointDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.HourOverrideDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.HourOverrideRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.TimeIntervalDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.WeeklyIntervalDto;
 import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.patch.Change;
@@ -58,14 +72,20 @@ class BackofficeBranchController implements BranchesApi {
 
 	private static final BigDecimal LNG_MAX = BigDecimal.valueOf(180);
 
+	private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+
 	private final BranchService branches;
+
+	private final BranchHoursService hours;
 
 	private final PermissionEvaluator permissions;
 
 	private final HttpServletRequest request;
 
-	BackofficeBranchController(BranchService branches, PermissionEvaluator permissions, HttpServletRequest request) {
+	BackofficeBranchController(BranchService branches, BranchHoursService hours, PermissionEvaluator permissions,
+			HttpServletRequest request) {
 		this.branches = branches;
+		this.hours = hours;
 		this.permissions = permissions;
 		this.request = request;
 	}
@@ -144,6 +164,80 @@ class BackofficeBranchController implements BranchesApi {
 					conflict.count()))
 			.toList();
 		return ResponseEntity.ok(new BranchClosureCheckDto(conflicts));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_VIEW)
+	public ResponseEntity<BranchBusinessHoursDto> getBranchBusinessHours(UUID branchId) {
+		return hoursResponse(this.hours.get(branchId));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchBusinessHoursDto> replaceBranchBusinessHours(UUID branchId,
+			BusinessHoursReplaceRequestDto body, String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.require(ifMatch);
+		List<WeeklyIntervalRequest> week = body.getWeekly().stream()
+			.map(hours -> new WeeklyIntervalRequest(hours.getDayOfWeek(), time(hours.getOpen()),
+					time(hours.getClose())))
+			.toList();
+		ClientInfo client = ClientInfo.from(this.request);
+		return hoursResponse(this.hours.replaceWeekly(branchId, week, expected, actor(), client.ipAddress(),
+				client.userAgent()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchBusinessHoursDto> putBranchHourOverride(UUID branchId, HourOverrideRequestDto body,
+			String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		HourOverrideRequest override = new HourOverrideRequest(body.getDate(), body.getIsClosed(),
+				body.getIntervals().stream()
+					.map(range -> new OpeningInterval(time(range.getOpen()), time(range.getClose())))
+					.toList(),
+				body.getReason());
+		ClientInfo client = ClientInfo.from(this.request);
+		return hoursResponse(this.hours.putOverride(branchId, override, expected, actor(), client.ipAddress(),
+				client.userAgent()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchBusinessHoursDto> deleteBranchHourOverride(UUID branchId, LocalDate date,
+			String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		ClientInfo client = ClientInfo.from(this.request);
+		return hoursResponse(this.hours.deleteOverride(branchId, date, expected, actor(), client.ipAddress(),
+				client.userAgent()));
+	}
+
+	private static ResponseEntity<BranchBusinessHoursDto> hoursResponse(BranchHoursView view) {
+		List<WeeklyIntervalDto> weekly = view.weekly().stream()
+			.map(hours -> new WeeklyIntervalDto(hours.dayOfWeek(), text(hours.open()), text(hours.close())))
+			.toList();
+		List<HourOverrideDto> overrides = view.overrides().stream()
+			.map(override -> new HourOverrideDto(override.date(), override.isClosed(),
+					override.intervals().stream()
+						.map(range -> new TimeIntervalDto(text(range.open()), text(range.close())))
+						.toList(),
+					override.reason()))
+			.toList();
+		return ResponseEntity.ok()
+			.eTag(VersionTags.of(view.version()))
+			.body(new BranchBusinessHoursDto(weekly, overrides));
+	}
+
+	private static ActorContext actor() {
+		return ActorContext.staff(AuthenticatedSession.require().userId(), null);
+	}
+
+	/** The spec pattern already guarantees {@code HH:mm} between {@code 00:00} and {@code 23:59}. */
+	private static LocalTime time(String hhmm) {
+		return LocalTime.parse(hhmm, HH_MM);
+	}
+
+	private static String text(LocalTime time) {
+		return time.format(HH_MM);
 	}
 
 	private ResponseEntity<BranchDto> lifecycle(String ifMatch, LifecycleCommand command) {
