@@ -230,8 +230,8 @@ public class Branch {
 		return new DayOverride(first.date(), first.closed(), ranges, first.reason());
 	}
 
-	/** A {@code CLOSED} Branch is frozen: information and hours alike (Decision O2, Q1). */
-	private void requireNotClosed() {
+	/** A {@code CLOSED} Branch is frozen: information, hours and other modules' config alike (Decision O2, Q1, R4). */
+	public void requireNotClosed() {
 		if (this.status == BranchStatus.CLOSED) {
 			throw new DomainException(BranchErrorCode.BRANCH_INVALID_TRANSITION, "Branch " + this.id + " is CLOSED",
 					this.status.name());

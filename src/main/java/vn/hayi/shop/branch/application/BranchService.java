@@ -22,6 +22,7 @@ import vn.hayi.shop.audit.api.AuditSource;
 import vn.hayi.shop.branch.api.BranchCommitment;
 import vn.hayi.shop.branch.api.BranchCommitmentContributor;
 import vn.hayi.shop.branch.api.BranchCommitmentType;
+import vn.hayi.shop.branch.api.BranchDirectory;
 import vn.hayi.shop.branch.domain.Branch;
 import vn.hayi.shop.branch.domain.BranchAddress;
 import vn.hayi.shop.branch.domain.BranchDiff;
@@ -40,7 +41,7 @@ import vn.hayi.shop.shared.error.DomainException;
  * audited in the same transaction.
  */
 @Service
-public class BranchService {
+public class BranchService implements BranchDirectory {
 
 	private static final String CODE_UNIQUE_KEY = "uk_brn_branch__branch_code";
 
@@ -181,6 +182,18 @@ public class BranchService {
 			.filter(total -> total.getValue() > 0)
 			.map(total -> new BranchCommitment(total.getKey(), total.getValue()))
 			.toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public void requireExists(UUID branchId) {
+		find(branchId);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public void requireConfigurable(UUID branchId) {
+		find(branchId).requireNotClosed();
 	}
 
 	@Transactional(readOnly = true)
