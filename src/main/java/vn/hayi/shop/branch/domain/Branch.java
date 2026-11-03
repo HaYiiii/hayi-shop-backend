@@ -145,10 +145,7 @@ public class Branch {
 
 	/** The weekly schedule, by day then opening time; a day without ranges is closed. */
 	public List<WeeklyHours> getWeeklyHours() {
-		return this.weeklyHours.stream()
-			.map(BranchBusinessHour::toWeeklyHours)
-			.sorted(Comparator.comparingInt(WeeklyHours::dayOfWeek).thenComparing(hours -> hours.range().open()))
-			.toList();
+		return sorted(this.weeklyHours.stream().map(BranchBusinessHour::toWeeklyHours).toList());
 	}
 
 	/** Overrides of {@code from} and later, by date. */
@@ -172,15 +169,26 @@ public class Branch {
 				.toList());
 	}
 
-	/** Replaces the whole week and returns the previous one (Decision Q1–Q2). */
-	public List<WeeklyHours> replaceWeeklyHours(List<WeeklyHours> week, Instant now) {
+	/**
+	 * Replaces the whole week (Decision Q1–Q2). The same ranges in any order are the same week: then nothing changes,
+	 * so the version does not move, and this returns {@code false}.
+	 */
+	public boolean replaceWeeklyHours(List<WeeklyHours> week, Instant now) {
 		requireNotClosed();
 		BusinessHoursRules.checkWeekly(week);
-		List<WeeklyHours> previous = getWeeklyHours();
+		if (sorted(week).equals(getWeeklyHours())) {
+			return false;
+		}
 		this.weeklyHours.clear();
 		week.forEach(hours -> this.weeklyHours.add(new BranchBusinessHour(hours)));
 		this.updatedAt = now;
-		return previous;
+		return true;
+	}
+
+	private static List<WeeklyHours> sorted(List<WeeklyHours> week) {
+		return week.stream()
+			.sorted(Comparator.comparingInt(WeeklyHours::dayOfWeek).thenComparing(hours -> hours.range().open()))
+			.toList();
 	}
 
 	/** Sets the hours of one date, replacing its override if any, which is returned (Decision Q3). */

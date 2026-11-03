@@ -55,15 +55,22 @@ public class BranchHoursService implements BranchOpeningHours {
 		return view(find(branchId));
 	}
 
-	/** Replaces the whole week; {@code expected} is required (API README §8). */
+	/**
+	 * Replaces the whole week; {@code expected} is required (API README §8). The same week again changes nothing: no
+	 * version bump, no Audit (Decision Q1).
+	 */
 	@Transactional
 	public BranchHoursView replaceWeekly(UUID branchId, List<WeeklyIntervalRequest> week, ExpectedVersion expected,
 			ActorContext actor, String ipAddress, String userAgent) {
 		Branch branch = find(branchId);
 		expected.verify(branch.getVersion());
-		List<WeeklyHours> previous = branch.replaceWeeklyHours(week.stream()
+		List<WeeklyHours> previous = branch.getWeeklyHours();
+		boolean changed = branch.replaceWeeklyHours(week.stream()
 			.map(hours -> new WeeklyHours(hours.dayOfWeek(), new TimeRange(hours.open(), hours.close())))
 			.toList(), this.clock.instant());
+		if (!changed) {
+			return view(branch);
+		}
 		this.branches.saveAndFlush(branch);
 		record(branch, "BRANCH_HOURS_REPLACE", Map.of("weekly", weekly(previous)),
 				Map.of("weekly", weekly(branch.getWeeklyHours())), actor, ipAddress, userAgent);

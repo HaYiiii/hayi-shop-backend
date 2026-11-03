@@ -113,6 +113,23 @@ class BackofficeBranchHoursTest {
 	}
 
 	@Test
+	void identicalWeekKeepsVersionAndIsNotAudited() throws Exception {
+		replace("\"v0\"", WEEK);
+
+		// The same ranges in another order are the same week (Decision Q1).
+		MockHttpServletResponse same = replace("\"v1\"", """
+				{"weekly": [
+				  {"dayOfWeek": 7, "open": "08:00", "close": "22:00"},
+				  {"dayOfWeek": 1, "open": "13:00", "close": "21:00"},
+				  {"dayOfWeek": 1, "open": "07:00", "close": "11:30"}]}
+				""");
+
+		assertThat(same.getStatus()).as(same.getContentAsString()).isEqualTo(200);
+		assertThat(same.getHeader("ETag")).isEqualTo("\"v1\"");
+		assertThat(audits("BRANCH_HOURS_REPLACE")).hasSize(1);
+	}
+
+	@Test
 	void weeklyHoursRequireCurrentIfMatch() throws Exception {
 		assertProblem(replace(null, WEEK), 428, "PRECONDITION_REQUIRED");
 		assertProblem(replace("\"v5\"", WEEK), 412, "VERSION_CONFLICT");
