@@ -16,6 +16,7 @@ import org.springframework.security.authentication.AuthenticationTrustResolverIm
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -69,12 +70,12 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	/**
 	 * Another change of the same aggregate committed first and the loser's optimistic lock failed (Decision O5). An
 	 * edit based on {@code If-Match} gets the same answer as a stale tag, {@code 412 VERSION_CONFLICT}; a request
-	 * without {@code If-Match} (a semantic command, API README §8) never named a version, so it gets
+	 * without (or with a blank) {@code If-Match} (a semantic command, API README §8) never named a version, so it gets
 	 * {@code 409 CONCURRENT_MODIFICATION}.
 	 */
 	@ExceptionHandler(OptimisticLockingFailureException.class)
 	ResponseEntity<ProblemDetail> handleLostUpdate(OptimisticLockingFailureException ex, HttpServletRequest request) {
-		boolean basedOnVersion = request.getHeader(HttpHeaders.IF_MATCH) != null;
+		boolean basedOnVersion = StringUtils.hasText(request.getHeader(HttpHeaders.IF_MATCH));
 		return respond(basedOnVersion ? CommonErrorCode.VERSION_CONFLICT : CommonErrorCode.CONCURRENT_MODIFICATION,
 				request);
 	}

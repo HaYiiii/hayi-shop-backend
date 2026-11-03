@@ -164,6 +164,15 @@ class ErrorResponseContractTest {
 			.andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
 	}
 
+	/** A blank {@code If-Match} names no version, as {@code VersionTags} treats it. */
+	@Test
+	@WithMockUser
+	void lostUpdateWithBlankIfMatchGets409ConcurrentModification() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update").header("If-Match", " "))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+	}
+
 	@Test
 	@WithMockUser
 	void unexpectedFailureGets500InternalErrorWithoutStackTraceOrMessage() throws Exception {
