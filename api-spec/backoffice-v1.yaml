@@ -20,6 +20,8 @@ tags:
     description: Backoffice login, MFA, step-up, session, CSRF and the caller's access (API 01-security §5–6, §8, Decision K, L, M)
   - name: Branches
     description: Branch identity, lifecycle and business hours (Branch §4, API 09 §1)
+  - name: FulfillmentConfigs
+    description: How and when a Branch takes orders, per fulfillment type (Fulfillment §8, API 09 §2)
 security:
   - accessCookie: []
 paths:
@@ -561,6 +563,66 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/InvalidTransition' }
         '412': { $ref: '#/components/responses/VersionConflict' }
+  /branches/{branchId}/fulfillment/configs:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [FulfillmentConfigs]
+      operationId: listFulfillmentConfigs
+      summary: The Branch's fulfillment configs
+      description: |
+        `BRANCH_VIEW` at that Branch. Always has `PICKUP` (MVP); before the first save it shows the ERD defaults with
+        `version: 0`, which is the `If-Match` that creates it (Decision R1).
+      responses:
+        '200':
+          description: One config per fulfillment type.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FulfillmentConfigList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /branches/{branchId}/fulfillment/configs/{fulfillmentType}:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: fulfillmentType
+        in: path
+        required: true
+        description: Only `PICKUP` in the MVP; anything else → `422 FULFILLMENT_CONFIG_INVALID`.
+        schema: { type: string, maxLength: 32 }
+    put:
+      tags: [FulfillmentConfigs]
+      operationId: replaceFulfillmentConfig
+      summary: Replace one fulfillment config
+      description: |
+        `FULFILLMENT_CONFIG_MANAGE` at that Branch. Requires `If-Match` (`"v0"` creates the config; missing → `428`,
+        stale → `412`). Values are checked by the server: `slotDurationMinutes` 15 or 30, days/minutes ≥ 0, capacity
+        `null` or ≥ 1, instructions ≤ 500 → otherwise `422 FULFILLMENT_CONFIG_INVALID` with `errors[]` (Decision R3).
+        A `CLOSED` Branch → `409`. Unchanged values keep the version; changes are audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FulfillmentConfigInput' }
+      responses:
+        '200':
+          description: The config after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FulfillmentConfig' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/FulfillmentConfigInvalid' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
 components:
   securitySchemes:
     accessCookie:
@@ -793,6 +855,39 @@ components:
           type: array
           description: Overrides from today (`Asia/Ho_Chi_Minh`) on, sorted by date.
           items: { $ref: '#/components/schemas/HourOverride' }
+    FulfillmentConfigInput:
+      type: object
+      description: The whole config (API 09 §2); value rules are checked by the server (422, Decision R3).
+      required: [isEnabled, asapEnabled, maxAdvanceDays, slotDurationMinutes, sameDayCutoffMinutes, minLeadMinutes,
+        groupOrderMinLeadMinutes, customerCancelCutoffMinutes, defaultSlotMaxOrders, defaultSlotMaxItems,
+        pickupInstructions]
+      properties:
+        isEnabled: { type: boolean }
+        asapEnabled: { type: boolean, description: 'Stored only; ordering is scheduled in the MVP.' }
+        maxAdvanceDays: { type: integer, format: int32 }
+        slotDurationMinutes: { type: integer, format: int32, description: '15 or 30 (Decision N4).' }
+        sameDayCutoffMinutes: { type: integer, format: int32, description: 'Today''s slots only (Decision N1).' }
+        minLeadMinutes: { type: integer, format: int32, description: 'Every day (Decision N2).' }
+        groupOrderMinLeadMinutes: { type: [integer, 'null'], format: int32 }
+        customerCancelCutoffMinutes: { type: [integer, 'null'], format: int32 }
+        defaultSlotMaxOrders: { type: [integer, 'null'], format: int32, description: '`null` = no limit.' }
+        defaultSlotMaxItems: { type: [integer, 'null'], format: int32, description: '`null` = no limit.' }
+        pickupInstructions: { type: [string, 'null'] }
+    FulfillmentConfig:
+      allOf:
+        - $ref: '#/components/schemas/FulfillmentConfigInput'
+        - type: object
+          required: [fulfillmentType, version]
+          properties:
+            fulfillmentType: { type: string, enum: [PICKUP] }
+            version: { type: integer, format: int64, description: '`0` until first saved (Decision R1).' }
+    FulfillmentConfigList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/FulfillmentConfig' }
     BranchList:
       type: object
       required: [items]
@@ -994,6 +1089,11 @@ components:
           schema: { $ref: '#/components/schemas/BranchLifecycleProblem' }
     HoursInvalid:
       description: '`BRANCH_HOURS_INVALID` with `errors[]` (Decision Q2)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    FulfillmentConfigInvalid:
+      description: '`FULFILLMENT_CONFIG_INVALID` with `errors[]` (Decision R3)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
