@@ -61,8 +61,12 @@ class BackofficeBranchLifecycleTest {
 	@Autowired
 	JdbcClient jdbc;
 
+	/** Two contributors, as Order and Group Order will be; field names pick the bean. */
 	@Autowired
-	FakeCommitments commitments;
+	FakeCommitments fakeCommitments;
+
+	@Autowired
+	FakeCommitments otherModuleCommitments;
 
 	BackofficeAuth auth;
 
@@ -82,7 +86,8 @@ class BackofficeBranchLifecycleTest {
 
 	@AfterEach
 	void reset() {
-		this.commitments.clear();
+		this.fakeCommitments.clear();
+		this.otherModuleCommitments.clear();
 		this.clock.reset();
 	}
 
@@ -193,6 +198,35 @@ class BackofficeBranchLifecycleTest {
 	}
 
 	@Test
+	void closingADraftBranchIsAlsoBlockedByOpenCommitments() throws Exception {
+		report(new BranchCommitment(BranchCommitmentType.ACTIVE_ORDERS, 1));
+
+		MockHttpServletResponse close = command("close", this.fixtures.openSteppedUpSession(this.adminId));
+
+		assertProblem(close, 409, "BRANCH_HAS_OPEN_COMMITMENTS");
+		assertThat(JsonPath.<List<String>>read(close.getContentAsString(), "$.conflicts[*].type"))
+			.containsExactly("ACTIVE_ORDERS");
+		assertThat(JsonPath.<String>read(detail().getContentAsString(), "$.status")).isEqualTo("DRAFT");
+		assertThat(audits("BRANCH_CLOSE")).isEmpty();
+	}
+
+	@Test
+	void countsOfOneTypeAreSummedAcrossContributors() throws Exception {
+		UUID branch = UUID.fromString(this.branchId);
+		this.fakeCommitments.report(branch, List.of(new BranchCommitment(BranchCommitmentType.ACTIVE_ORDERS, 2),
+				new BranchCommitment(BranchCommitmentType.OPEN_GROUP_SESSIONS, 0)));
+		this.otherModuleCommitments.report(branch,
+				List.of(new BranchCommitment(BranchCommitmentType.FUTURE_SCHEDULED_ORDERS, 5),
+						new BranchCommitment(BranchCommitmentType.ACTIVE_ORDERS, 3)));
+
+		String body = closureCheck().getContentAsString();
+
+		assertThat(JsonPath.<List<String>>read(body, "$.conflicts[*].type")).containsExactly("ACTIVE_ORDERS",
+				"FUTURE_SCHEDULED_ORDERS");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.conflicts[*].count")).containsExactly(5, 5);
+	}
+
+	@Test
 	void zeroCountsAreNotConflicts() throws Exception {
 		command("activate", this.admin);
 		report(new BranchCommitment(BranchCommitmentType.ACTIVE_ORDERS, 0));
@@ -229,7 +263,7 @@ class BackofficeBranchLifecycleTest {
 	}
 
 	private void report(BranchCommitment... reported) {
-		this.commitments.report(UUID.fromString(this.branchId), List.of(reported));
+		this.fakeCommitments.report(UUID.fromString(this.branchId), List.of(reported));
 	}
 
 	private MockHttpServletResponse command(String action, Session session) throws Exception {
@@ -307,6 +341,11 @@ class BackofficeBranchLifecycleTest {
 
 		@Bean
 		FakeCommitments fakeCommitments() {
+			return new FakeCommitments();
+		}
+
+		@Bean
+		FakeCommitments otherModuleCommitments() {
 			return new FakeCommitments();
 		}
 

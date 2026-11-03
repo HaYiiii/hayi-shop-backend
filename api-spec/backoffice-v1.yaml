@@ -613,6 +613,12 @@ components:
             conflicts:
               type: array
               items: { $ref: '#/components/schemas/BranchConflict' }
+    BranchLifecycleProblem:
+      description: |
+        `BRANCH_HAS_OPEN_COMMITMENTS` carries `conflicts[]`; `BRANCH_INVALID_TRANSITION` is a plain Problem.
+      oneOf:
+        - $ref: '#/components/schemas/BranchOpenCommitmentsProblem'
+        - $ref: '#/components/schemas/Problem'
     BranchList:
       type: object
       required: [items]
@@ -811,7 +817,7 @@ components:
       description: '`BRANCH_INVALID_TRANSITION`, or `BRANCH_HAS_OPEN_COMMITMENTS` with `conflicts[]`'
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/BranchOpenCommitmentsProblem' }
+          schema: { $ref: '#/components/schemas/BranchLifecycleProblem' }
     VersionConflict:
       description: '`VERSION_CONFLICT` — `If-Match` is not the current version (API README §8)'
       content:
