@@ -121,4 +121,7 @@ tasks.bootRun {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+	// Run tests in the operational zone, not the runner's (GitHub runners are UTC): a mapping that shifts wall-clock
+	// TIME columns by the JVM offset only shows up off UTC (PR #50 review).
+	systemProperty("user.timezone", "Asia/Ho_Chi_Minh")
 }
