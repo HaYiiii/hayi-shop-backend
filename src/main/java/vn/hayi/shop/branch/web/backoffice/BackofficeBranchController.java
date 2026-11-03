@@ -26,11 +26,15 @@ import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.PermissionEvaluator;
 import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.platform.security.RequiresPermission;
+import vn.hayi.shop.platform.security.RequiresStepUp;
 import vn.hayi.shop.platform.web.MergePatch;
 import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.BranchesApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressInputDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchClosureCheckDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchCommitmentTypeDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchConflictDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchCreateRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListDto;
@@ -107,6 +111,54 @@ class BackofficeBranchController implements BranchesApi {
 		BranchView branch = this.branches.update(branchId, changes, expected,
 				ActorContext.staff(session.userId(), null), client.ipAddress(), client.userAgent());
 		return ResponseEntity.ok().eTag(eTag(branch)).body(toDto(branch));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchDto> activateBranch(UUID branchId, String ifMatch, String xCsrfToken) {
+		return lifecycle(ifMatch, (expected, actor, client) -> this.branches.activate(branchId, expected, actor,
+				client.ipAddress(), client.userAgent()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchDto> deactivateBranch(UUID branchId, String ifMatch, String xCsrfToken) {
+		return lifecycle(ifMatch, (expected, actor, client) -> this.branches.deactivate(branchId, expected, actor,
+				client.ipAddress(), client.userAgent()));
+	}
+
+	/** Closing is terminal, so it needs a fresh step-up even though {@code BRANCH_MANAGE} is not S (M5, P4). */
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	@RequiresStepUp
+	public ResponseEntity<BranchDto> closeBranch(UUID branchId, String ifMatch, String xCsrfToken) {
+		return lifecycle(ifMatch, (expected, actor, client) -> this.branches.close(branchId, expected, actor,
+				client.ipAddress(), client.userAgent()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchClosureCheckDto> getBranchClosureCheck(UUID branchId) {
+		List<BranchConflictDto> conflicts = this.branches.closureCheck(branchId).stream()
+			.map(conflict -> new BranchConflictDto(BranchCommitmentTypeDto.valueOf(conflict.type().name()),
+					conflict.count()))
+			.toList();
+		return ResponseEntity.ok(new BranchClosureCheckDto(conflicts));
+	}
+
+	private ResponseEntity<BranchDto> lifecycle(String ifMatch, LifecycleCommand command) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		AuthenticatedSession session = AuthenticatedSession.require();
+		BranchView branch = command.run(expected, ActorContext.staff(session.userId(), null),
+				ClientInfo.from(this.request));
+		return ResponseEntity.ok().eTag(eTag(branch)).body(toDto(branch));
+	}
+
+	@FunctionalInterface
+	private interface LifecycleCommand {
+
+		BranchView run(ExpectedVersion expected, ActorContext actor, ClientInfo client);
+
 	}
 
 	/** Field limits follow ERD 03 and the {@code BranchPatch} schema; anything else in the body is refused. */

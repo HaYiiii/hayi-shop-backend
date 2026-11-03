@@ -189,12 +189,22 @@ public class IdentityFixtures {
 
 	/** A live Backoffice session with its access and CSRF cookies, as a completed login would leave them. */
 	public Session openSession(UUID userId) {
+		return openSession(userId, null);
+	}
+
+	/** A session whose step-up was verified just now, for sensitive actions (API 01-security §8). */
+	public Session openSteppedUpSession(UUID userId) {
+		return openSession(userId, Instant.now());
+	}
+
+	private Session openSession(UUID userId, Instant stepUpVerifiedAt) {
 		UUID sessionId = UuidV7.generate();
 		Instant now = Instant.now();
 		this.jdbc.sql("""
-				INSERT INTO iam_user_session (id, user_id, persona, channel, created_at, last_active_at, expires_at)
-				VALUES (?, ?, 'STAFF', 'BACKOFFICE_WEB', ?, ?, ?)
-				""").params(id(sessionId), id(userId), now, now, now.plusSeconds(3600)).update();
+				INSERT INTO iam_user_session (id, user_id, persona, channel, created_at, last_active_at, expires_at,
+				  step_up_verified_at)
+				VALUES (?, ?, 'STAFF', 'BACKOFFICE_WEB', ?, ?, ?, ?)
+				""").params(id(sessionId), id(userId), now, now, now.plusSeconds(3600), stepUpVerifiedAt).update();
 		return new Session(this.tokens.issueAccessToken(Surface.BACKOFFICE, userId, sessionId), null,
 				this.csrfTokens.issue(sessionId));
 	}
