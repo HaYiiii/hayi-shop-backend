@@ -27,6 +27,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -149,6 +150,22 @@ class ErrorResponseContractTest {
 
 	@Test
 	@WithMockUser
+	void lostUpdateOfAnEditBasedOnIfMatchGets412VersionConflict() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update").header("If-Match", "\"v3\""))
+			.andExpect(status().isPreconditionFailed())
+			.andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+	}
+
+	@Test
+	@WithMockUser
+	void lostUpdateWithoutIfMatchGets409ConcurrentModification() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+	}
+
+	@Test
+	@WithMockUser
 	void unexpectedFailureGets500InternalErrorWithoutStackTraceOrMessage() throws Exception {
 		MvcResult result = mvc.perform(get(PROBE + "/boom"))
 			.andExpect(status().isInternalServerError())
@@ -242,6 +259,12 @@ class ErrorResponseContractTest {
 		/** Path variable missing from the template: Spring raises a 500 MissingPathVariableException. */
 		@GetMapping("/missing-path-variable")
 		void missingPathVariable(@PathVariable String id) {
+		}
+
+		/** A concurrent edit committed first; the loser's flush fails its optimistic lock. */
+		@PostMapping("/lost-update")
+		void lostUpdate() {
+			throw new ObjectOptimisticLockingFailureException("Probe", "probe-id");
 		}
 
 		@GetMapping("/boom")

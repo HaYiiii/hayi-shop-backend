@@ -67,12 +67,16 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	}
 
 	/**
-	 * Another edit of the same version committed first (API README §8): the loser's optimistic lock fails, which is
-	 * the same outcome as a stale {@code If-Match}.
+	 * Another change of the same aggregate committed first and the loser's optimistic lock failed (Decision O5). An
+	 * edit based on {@code If-Match} gets the same answer as a stale tag, {@code 412 VERSION_CONFLICT}; a request
+	 * without {@code If-Match} (a semantic command, API README §8) never named a version, so it gets
+	 * {@code 409 CONCURRENT_MODIFICATION}.
 	 */
 	@ExceptionHandler(OptimisticLockingFailureException.class)
 	ResponseEntity<ProblemDetail> handleLostUpdate(OptimisticLockingFailureException ex, HttpServletRequest request) {
-		return respond(CommonErrorCode.VERSION_CONFLICT, request);
+		boolean basedOnVersion = request.getHeader(HttpHeaders.IF_MATCH) != null;
+		return respond(basedOnVersion ? CommonErrorCode.VERSION_CONFLICT : CommonErrorCode.CONCURRENT_MODIFICATION,
+				request);
 	}
 
 	/** {@code AUTH_REQUIRED}, or the precise cause: {@code AUTH_TOKEN_EXPIRED}, {@code AUTH_SESSION_REVOKED}. */
