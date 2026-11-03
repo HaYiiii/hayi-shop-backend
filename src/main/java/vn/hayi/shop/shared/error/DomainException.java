@@ -1,5 +1,6 @@
 package vn.hayi.shop.shared.error;
 
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -27,6 +28,14 @@ public class DomainException extends RuntimeException {
 
 	public Object[] detailArgs() {
 		return this.detailArgs.clone();
+	}
+
+	/**
+	 * Structured data the client needs besides {@code code}, added to the Problem Details as extra members (API
+	 * README §6), e.g. {@code conflicts[]} or {@code issues[]}. Values must be JSON-serializable. None by default.
+	 */
+	public Map<String, Object> problemProperties() {
+		return Map.of();
 	}
 
 }

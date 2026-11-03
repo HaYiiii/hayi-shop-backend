@@ -50,6 +50,7 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(DomainException.class)
 	ResponseEntity<ProblemDetail> handleDomain(DomainException ex, HttpServletRequest request) {
 		ResponseEntity<ProblemDetail> response = respond(ex.code(), request, ex.detailArgs());
+		ex.problemProperties().forEach(response.getBody()::setProperty);
 		if (ex instanceof ThrottledException throttled) {
 			long seconds = Math.max(1, (throttled.retryAfter().toMillis() + 999) / 1000);
 			return ResponseEntity.status(response.getStatusCode())

@@ -349,6 +349,103 @@ paths:
         '409': { $ref: '#/components/responses/InvalidTransition' }
         '412': { $ref: '#/components/responses/VersionConflict' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    post:
+      tags: [Branches]
+      operationId: activateBranch
+      summary: Activate a DRAFT or INACTIVE Branch
+      description: |
+        `BRANCH_MANAGE` at that Branch. `DRAFT/INACTIVE → ACTIVE` (Branch §4.3); sets `activatedAt` to now.
+        Any other status → `409 BRANCH_INVALID_TRANSITION`. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Branch after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /branches/{branchId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    post:
+      tags: [Branches]
+      operationId: deactivateBranch
+      summary: Deactivate an ACTIVE Branch
+      description: |
+        `BRANCH_MANAGE` at that Branch. `ACTIVE → INACTIVE` (Branch §4.3). Blocked while other modules report open
+        commitments → `409 BRANCH_HAS_OPEN_COMMITMENTS` with `conflicts[]` (Decision P3). Optional `If-Match`.
+        Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Branch after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/LifecycleConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /branches/{branchId}/close:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    post:
+      tags: [Branches]
+      operationId: closeBranch
+      summary: Close a Branch for good
+      description: |
+        `BRANCH_MANAGE` at that Branch **with a fresh step-up** (missing → `403 STEP_UP_REQUIRED`, Decision P4).
+        `DRAFT/ACTIVE/INACTIVE → CLOSED`, terminal; sets `closedAt`. Blocked by open commitments like deactivate.
+        Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Branch after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/LifecycleConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /branches/{branchId}/closure-check:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [Branches]
+      operationId: getBranchClosureCheck
+      summary: Open commitments that block deactivating or closing
+      description: '`BRANCH_MANAGE` at that Branch. Empty `conflicts` means deactivate/close is allowed (Decision P3).'
+      responses:
+        '200':
+          description: The open commitments, by type.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchClosureCheck' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     accessCookie:
@@ -379,6 +476,13 @@ components:
       description: |
         `"v{version}"` from the last `ETag` (API README §8). Required by the server on config edits: missing →
         `428 PRECONDITION_REQUIRED`; any other version, weak tag or `*` → `412 VERSION_CONFLICT`.
+      schema: { type: string, maxLength: 64 }
+    IfMatchOptional:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        Optional on commands (API README §8): when sent, a version other than the current one → `412 VERSION_CONFLICT`.
       schema: { type: string, maxLength: 64 }
     BranchId:
       name: branchId
@@ -484,6 +588,37 @@ components:
         closedAt: { type: [string, 'null'], format: date-time }
         createdAt: { type: string, format: date-time }
         version: { type: integer, format: int64, description: 'Same value as the `ETag`.' }
+    BranchCommitmentType:
+      type: string
+      enum: [ACTIVE_ORDERS, OPEN_GROUP_SESSIONS, FUTURE_SCHEDULED_ORDERS]
+    BranchConflict:
+      type: object
+      required: [type, count]
+      properties:
+        type: { $ref: '#/components/schemas/BranchCommitmentType' }
+        count: { type: integer, format: int64, minimum: 1 }
+    BranchClosureCheck:
+      type: object
+      required: [conflicts]
+      properties:
+        conflicts:
+          type: array
+          items: { $ref: '#/components/schemas/BranchConflict' }
+    BranchOpenCommitmentsProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [conflicts]
+          properties:
+            conflicts:
+              type: array
+              items: { $ref: '#/components/schemas/BranchConflict' }
+    BranchLifecycleProblem:
+      description: |
+        `BRANCH_HAS_OPEN_COMMITMENTS` carries `conflicts[]`; `BRANCH_INVALID_TRANSITION` is a plain Problem.
+      oneOf:
+        - $ref: '#/components/schemas/BranchOpenCommitmentsProblem'
+        - $ref: '#/components/schemas/Problem'
     BranchList:
       type: object
       required: [items]
@@ -678,6 +813,11 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    LifecycleConflict:
+      description: '`BRANCH_INVALID_TRANSITION`, or `BRANCH_HAS_OPEN_COMMITMENTS` with `conflicts[]`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/BranchLifecycleProblem' }
     VersionConflict:
       description: '`VERSION_CONFLICT` — `If-Match` is not the current version (API README §8)'
       content:

@@ -2,6 +2,7 @@ package vn.hayi.shop.branch.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
@@ -124,6 +125,42 @@ public class Branch {
 			this.updatedAt = now;
 		}
 		return diff;
+	}
+
+	/** {@code DRAFT/INACTIVE → ACTIVE}; {@code activatedAt} is the latest activation (Decision P2). */
+	public BranchStatus activate(Instant now) {
+		BranchStatus previous = moveTo(BranchStatus.ACTIVE, now, BranchStatus.DRAFT, BranchStatus.INACTIVE);
+		this.activatedAt = now;
+		return previous;
+	}
+
+	/** {@code ACTIVE → INACTIVE}. */
+	public BranchStatus deactivate(Instant now) {
+		return moveTo(BranchStatus.INACTIVE, now, BranchStatus.ACTIVE);
+	}
+
+	/** {@code DRAFT/ACTIVE/INACTIVE → CLOSED}, terminal. */
+	public BranchStatus close(Instant now) {
+		BranchStatus previous = moveTo(BranchStatus.CLOSED, now, BranchStatus.DRAFT, BranchStatus.ACTIVE,
+				BranchStatus.INACTIVE);
+		this.closedAt = now;
+		return previous;
+	}
+
+	/**
+	 * The lifecycle of Branch §4.3: only the listed {@code from} statuses may move to {@code target}; staying in the
+	 * same status is not a transition either (Decision P1).
+	 * @throws DomainException {@code BRANCH_INVALID_TRANSITION} otherwise
+	 */
+	private BranchStatus moveTo(BranchStatus target, Instant now, BranchStatus... from) {
+		BranchStatus previous = this.status;
+		if (!Arrays.asList(from).contains(previous)) {
+			throw new DomainException(BranchErrorCode.BRANCH_INVALID_TRANSITION,
+					"Branch " + this.id + " cannot go from " + previous + " to " + target, previous.name());
+		}
+		this.status = target;
+		this.updatedAt = now;
+		return previous;
 	}
 
 	private static String changed(BranchDiff diff, String field, String current, String next) {

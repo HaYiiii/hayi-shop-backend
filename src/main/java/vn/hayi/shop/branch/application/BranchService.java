@@ -1,12 +1,16 @@
 package vn.hayi.shop.branch.application;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -15,12 +19,16 @@ import org.springframework.transaction.annotation.Transactional;
 import vn.hayi.shop.audit.api.AuditEntry;
 import vn.hayi.shop.audit.api.AuditRecorder;
 import vn.hayi.shop.audit.api.AuditSource;
+import vn.hayi.shop.branch.api.BranchCommitment;
+import vn.hayi.shop.branch.api.BranchCommitmentContributor;
+import vn.hayi.shop.branch.api.BranchCommitmentType;
 import vn.hayi.shop.branch.domain.Branch;
 import vn.hayi.shop.branch.domain.BranchAddress;
 import vn.hayi.shop.branch.domain.BranchDiff;
 import vn.hayi.shop.branch.domain.BranchEdit;
 import vn.hayi.shop.branch.domain.BranchErrorCode;
 import vn.hayi.shop.branch.domain.BranchRepository;
+import vn.hayi.shop.branch.domain.BranchStatus;
 import vn.hayi.shop.branch.domain.GeoPoint;
 import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.shared.actor.ActorContext;
@@ -28,8 +36,8 @@ import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
 
 /**
- * Creates, edits and reads Branches (Branch §4.2–4.3, API 09 §1); every creation and edit is audited in the same
- * transaction.
+ * Creates, edits, moves through the lifecycle and reads Branches (Branch §4.2–4.5, API 09 §1); every change is
+ * audited in the same transaction.
  */
 @Service
 public class BranchService {
@@ -42,10 +50,14 @@ public class BranchService {
 
 	private final Clock clock;
 
-	BranchService(BranchRepository branches, AuditRecorder audit, Clock clock) {
+	private final ObjectProvider<BranchCommitmentContributor> contributors;
+
+	BranchService(BranchRepository branches, AuditRecorder audit, Clock clock,
+			ObjectProvider<BranchCommitmentContributor> contributors) {
 		this.branches = branches;
 		this.audit = audit;
 		this.clock = clock;
+		this.contributors = contributors;
 	}
 
 	@Transactional
@@ -99,6 +111,76 @@ public class BranchService {
 			.withNewValue(diff.newValues())
 			.withClient(ipAddress, userAgent));
 		return BranchView.of(branch);
+	}
+
+	/** {@code DRAFT/INACTIVE → ACTIVE} (Branch §4.3, Decision P1–P2). */
+	@Transactional
+	public BranchView activate(UUID branchId, ExpectedVersion expected, ActorContext actor, String ipAddress,
+			String userAgent) {
+		return transition(branchId, expected, "BRANCH_ACTIVATE", false, Branch::activate, actor, ipAddress,
+				userAgent);
+	}
+
+	/** {@code ACTIVE → INACTIVE}, refused while commitments are open (Branch §4.5, Decision P3). */
+	@Transactional
+	public BranchView deactivate(UUID branchId, ExpectedVersion expected, ActorContext actor, String ipAddress,
+			String userAgent) {
+		return transition(branchId, expected, "BRANCH_DEACTIVATE", true, Branch::deactivate, actor, ipAddress,
+				userAgent);
+	}
+
+	/** {@code → CLOSED} for good, refused while commitments are open; the caller has checked step-up (P4). */
+	@Transactional
+	public BranchView close(UUID branchId, ExpectedVersion expected, ActorContext actor, String ipAddress,
+			String userAgent) {
+		return transition(branchId, expected, "BRANCH_CLOSE", true, Branch::close, actor, ipAddress, userAgent);
+	}
+
+	/**
+	 * What blocks deactivate/close now: every contributor's open commitments, summed per type, zero counts dropped,
+	 * in {@link BranchCommitmentType} order (Decision P3).
+	 */
+	@Transactional(readOnly = true)
+	public List<BranchCommitment> closureCheck(UUID branchId) {
+		return openCommitments(find(branchId).getId());
+	}
+
+	/**
+	 * {@code expected} is {@code null} when the caller sent no {@code If-Match} (optional on commands, API README §8).
+	 * The transition is applied first, so an invalid one is refused before any commitment is counted; a refusal for
+	 * open commitments rolls it back.
+	 */
+	private BranchView transition(UUID branchId, ExpectedVersion expected, String action, boolean needsNoCommitments,
+			BiFunction<Branch, Instant, BranchStatus> move, ActorContext actor, String ipAddress, String userAgent) {
+		Branch branch = find(branchId);
+		if (expected != null) {
+			expected.verify(branch.getVersion());
+		}
+		BranchStatus previous = move.apply(branch, this.clock.instant());
+		if (needsNoCommitments) {
+			List<BranchCommitment> conflicts = openCommitments(branchId);
+			if (!conflicts.isEmpty()) {
+				throw new BranchOpenCommitmentsException(branchId, conflicts);
+			}
+		}
+		this.branches.saveAndFlush(branch);
+		this.audit.record(AuditEntry.of(actor, AuditSource.BACKOFFICE_WEB, action, "BRANCH", branch.getId())
+			.withBranch(branch.getId())
+			.withOldValue(Map.of("status", previous.name()))
+			.withNewValue(Map.of("status", branch.getStatus().name()))
+			.withClient(ipAddress, userAgent));
+		return BranchView.of(branch);
+	}
+
+	private List<BranchCommitment> openCommitments(UUID branchId) {
+		Map<BranchCommitmentType, Long> totals = new EnumMap<>(BranchCommitmentType.class);
+		this.contributors.orderedStream()
+			.flatMap(contributor -> contributor.openCommitments(branchId).stream())
+			.forEach(commitment -> totals.merge(commitment.type(), commitment.count(), Long::sum));
+		return totals.entrySet().stream()
+			.filter(total -> total.getValue() > 0)
+			.map(total -> new BranchCommitment(total.getKey(), total.getValue()))
+			.toList();
 	}
 
 	@Transactional(readOnly = true)
