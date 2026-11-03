@@ -36,6 +36,20 @@ class VersionTagsTest {
 				ex -> assertThat(ex.code()).isEqualTo(CommonErrorCode.VERSION_CONFLICT));
 	}
 
+	@ParameterizedTest
+	@NullAndEmptySource
+	@ValueSource(strings = { "  " })
+	void optionalIfMatchMayBeMissing(String ifMatch) {
+		assertThat(VersionTags.optional(ifMatch)).isNull();
+	}
+
+	@Test
+	void optionalIfMatchStillMustBeAVersionTag() {
+		assertThat(VersionTags.optional("\"v2\"")).isEqualTo(new ExpectedVersion(2));
+		assertThatThrownBy(() -> VersionTags.optional("*")).isInstanceOfSatisfying(DomainException.class,
+				ex -> assertThat(ex.code()).isEqualTo(CommonErrorCode.VERSION_CONFLICT));
+	}
+
 	@Test
 	void staleVersionIsAConflict() {
 		assertThatThrownBy(() -> new ExpectedVersion(1).verify(2)).isInstanceOfSatisfying(DomainException.class,

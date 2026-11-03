@@ -24,6 +24,14 @@ public final class VersionTags {
 	}
 
 	/**
+	 * For commands where {@code If-Match} is optional (API README §8): {@code null} when it is missing or blank,
+	 * otherwise as {@link #require(String)}.
+	 */
+	public static ExpectedVersion optional(String ifMatch) {
+		return (ifMatch == null || ifMatch.isBlank()) ? null : require(ifMatch);
+	}
+
+	/**
 	 * The version an edit is based on.
 	 * @throws DomainException {@code PRECONDITION_REQUIRED} when {@code ifMatch} is missing; {@code VERSION_CONFLICT}
 	 * when it is anything but one strong {@code "v{n}"} tag — a weak tag, {@code *} or a list cannot match a version

@@ -12,6 +12,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
+import java.util.Map;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
@@ -150,6 +153,16 @@ class ErrorResponseContractTest {
 
 	@Test
 	@WithMockUser
+	void domainExceptionPropertiesBecomeProblemMembers() throws Exception {
+		mvc.perform(get(PROBE + "/domain-error-with-properties"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("PROBE_INVALID_TRANSITION"))
+			.andExpect(jsonPath("$.conflicts[0].type").value("PROBE"))
+			.andExpect(jsonPath("$.conflicts[0].count").value(2));
+	}
+
+	@Test
+	@WithMockUser
 	void lostUpdateOfAnEditBasedOnIfMatchGets412VersionConflict() throws Exception {
 		mvc.perform(post(PROBE + "/lost-update").header("If-Match", "\"v3\""))
 			.andExpect(status().isPreconditionFailed())
@@ -268,6 +281,16 @@ class ErrorResponseContractTest {
 		/** Path variable missing from the template: Spring raises a 500 MissingPathVariableException. */
 		@GetMapping("/missing-path-variable")
 		void missingPathVariable(@PathVariable String id) {
+		}
+
+		@GetMapping("/domain-error-with-properties")
+		void domainErrorWithProperties() {
+			throw new DomainException(ProbeErrorCode.PROBE_INVALID_TRANSITION, "probe with properties") {
+				@Override
+				public Map<String, Object> problemProperties() {
+					return Map.of("conflicts", List.of(Map.of("type", "PROBE", "count", 2)));
+				}
+			};
 		}
 
 		/** A concurrent edit committed first; the loser's flush fails its optimistic lock. */
