@@ -1,5 +1,7 @@
 package vn.hayi.shop.audit.api;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -21,8 +23,13 @@ public record AuditEntry(ActorContext actor, AuditSource source, String action, 
 		Objects.requireNonNull(action, "action");
 		Objects.requireNonNull(entityType, "entityType");
 		Objects.requireNonNull(entityId, "entityId");
-		oldValue = (oldValue != null) ? Map.copyOf(oldValue) : null;
-		newValue = (newValue != null) ? Map.copyOf(newValue) : null;
+		oldValue = copy(oldValue);
+		newValue = copy(newValue);
+	}
+
+	/** Keeps {@code null} values (a cleared field's new value) and the caller's key order. */
+	private static Map<String, ?> copy(Map<String, ?> values) {
+		return (values != null) ? Collections.unmodifiableMap(new LinkedHashMap<>(values)) : null;
 	}
 
 	public static AuditEntry of(ActorContext actor, AuditSource source, String action, String entityType,

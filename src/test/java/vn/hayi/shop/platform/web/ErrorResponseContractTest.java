@@ -27,6 +27,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -131,7 +132,9 @@ class ErrorResponseContractTest {
 	@CsvSource({
 			"PROBE_NOT_FOUND, 404",
 			"PROBE_INVALID_TRANSITION, 409",
-			"PROBE_RULE_VIOLATED, 422" })
+			"PROBE_RULE_VIOLATED, 422",
+			"PROBE_VERSION_CONFLICT, 412",
+			"PROBE_PRECONDITION_REQUIRED, 428" })
 	@WithMockUser
 	void domainExceptionGetsStatusOfItsErrorKindAndKeepsModuleCode(String code, int expectedStatus) throws Exception {
 		MvcResult result = mvc.perform(get(PROBE + "/domain-error/" + code))
@@ -143,6 +146,31 @@ class ErrorResponseContractTest {
 			.andReturn();
 
 		assertTraceIdInBodyMatchesHeader(result);
+	}
+
+	@Test
+	@WithMockUser
+	void lostUpdateOfAnEditBasedOnIfMatchGets412VersionConflict() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update").header("If-Match", "\"v3\""))
+			.andExpect(status().isPreconditionFailed())
+			.andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+	}
+
+	@Test
+	@WithMockUser
+	void lostUpdateWithoutIfMatchGets409ConcurrentModification() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update"))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+	}
+
+	/** A blank {@code If-Match} names no version, as {@code VersionTags} treats it. */
+	@Test
+	@WithMockUser
+	void lostUpdateWithBlankIfMatchGets409ConcurrentModification() throws Exception {
+		mvc.perform(post(PROBE + "/lost-update").header("If-Match", " "))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
 	}
 
 	@Test
@@ -242,6 +270,12 @@ class ErrorResponseContractTest {
 		void missingPathVariable(@PathVariable String id) {
 		}
 
+		/** A concurrent edit committed first; the loser's flush fails its optimistic lock. */
+		@PostMapping("/lost-update")
+		void lostUpdate() {
+			throw new ObjectOptimisticLockingFailureException("Probe", "probe-id");
+		}
+
 		@GetMapping("/boom")
 		void boom() {
 			throw new IllegalStateException(BOOM_MESSAGE);
@@ -257,7 +291,9 @@ class ErrorResponseContractTest {
 
 		PROBE_NOT_FOUND(ErrorKind.NOT_FOUND),
 		PROBE_INVALID_TRANSITION(ErrorKind.CONFLICT),
-		PROBE_RULE_VIOLATED(ErrorKind.BUSINESS_RULE);
+		PROBE_RULE_VIOLATED(ErrorKind.BUSINESS_RULE),
+		PROBE_VERSION_CONFLICT(ErrorKind.PRECONDITION_FAILED),
+		PROBE_PRECONDITION_REQUIRED(ErrorKind.PRECONDITION_REQUIRED);
 
 		private final ErrorKind kind;
 

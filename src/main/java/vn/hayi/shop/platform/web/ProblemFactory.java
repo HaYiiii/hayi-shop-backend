@@ -43,6 +43,8 @@ class ProblemFactory {
 			case FORBIDDEN -> HttpStatus.FORBIDDEN;
 			case NOT_FOUND -> HttpStatus.NOT_FOUND;
 			case CONFLICT -> HttpStatus.CONFLICT;
+			case PRECONDITION_FAILED -> HttpStatus.PRECONDITION_FAILED;
+			case PRECONDITION_REQUIRED -> HttpStatus.PRECONDITION_REQUIRED;
 			case BUSINESS_RULE -> HttpStatus.UNPROCESSABLE_CONTENT;
 			case TOO_MANY_REQUESTS -> HttpStatus.TOO_MANY_REQUESTS;
 			case INTERNAL -> HttpStatus.INTERNAL_SERVER_ERROR;
@@ -78,6 +80,16 @@ class ProblemFactory {
 		return result.getFieldErrors().stream()
 			.map(error -> new FieldViolation(error.getField(), toUpperSnake(error.getCode()),
 					this.messages.getMessage(error, locale)))
+			.toList();
+	}
+
+	/** {@code errors[]} entries for a hand-validated body; messages from {@code validation.<CODE>}. */
+	List<FieldViolation> fieldViolations(List<InvalidFieldsException.Violation> violations,
+			HttpServletRequest request) {
+		Locale locale = this.localeResolver.resolveLocale(request);
+		return violations.stream()
+			.map(violation -> new FieldViolation(violation.field(), violation.code(),
+					this.messages.getMessage("validation." + violation.code(), null, violation.code(), locale)))
 			.toList();
 	}
 

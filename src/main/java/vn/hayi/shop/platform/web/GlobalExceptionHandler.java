@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -15,6 +16,7 @@ import org.springframework.security.authentication.AuthenticationTrustResolverIm
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -55,6 +57,27 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 				.body(response.getBody());
 		}
 		return response;
+	}
+
+	/** Hand-validated bodies ({@link MergePatch}) report like bean validation: {@code errors[]} per field. */
+	@ExceptionHandler(InvalidFieldsException.class)
+	ResponseEntity<ProblemDetail> handleInvalidFields(InvalidFieldsException ex, HttpServletRequest request) {
+		ProblemDetail problem = this.problems.create(CommonErrorCode.VALIDATION_FAILED, request);
+		problem.setProperty("errors", this.problems.fieldViolations(ex.violations(), request));
+		return ResponseEntity.badRequest().body(problem);
+	}
+
+	/**
+	 * Another change of the same aggregate committed first and the loser's optimistic lock failed (Decision O5). An
+	 * edit based on {@code If-Match} gets the same answer as a stale tag, {@code 412 VERSION_CONFLICT}; a request
+	 * without (or with a blank) {@code If-Match} (a semantic command, API README §8) never named a version, so it gets
+	 * {@code 409 CONCURRENT_MODIFICATION}.
+	 */
+	@ExceptionHandler(OptimisticLockingFailureException.class)
+	ResponseEntity<ProblemDetail> handleLostUpdate(OptimisticLockingFailureException ex, HttpServletRequest request) {
+		boolean basedOnVersion = StringUtils.hasText(request.getHeader(HttpHeaders.IF_MATCH));
+		return respond(basedOnVersion ? CommonErrorCode.VERSION_CONFLICT : CommonErrorCode.CONCURRENT_MODIFICATION,
+				request);
 	}
 
 	/** {@code AUTH_REQUIRED}, or the precise cause: {@code AUTH_TOKEN_EXPIRED}, {@code AUTH_SESSION_REVOKED}. */

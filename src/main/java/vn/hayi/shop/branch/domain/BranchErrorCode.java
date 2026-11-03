@@ -7,7 +7,8 @@ import vn.hayi.shop.shared.error.ErrorKind;
 public enum BranchErrorCode implements ErrorCode {
 
 	BRANCH_NOT_FOUND(ErrorKind.NOT_FOUND),
-	BRANCH_CODE_TAKEN(ErrorKind.CONFLICT);
+	BRANCH_CODE_TAKEN(ErrorKind.CONFLICT),
+	BRANCH_INVALID_TRANSITION(ErrorKind.CONFLICT);
 
 	private final ErrorKind kind;
 

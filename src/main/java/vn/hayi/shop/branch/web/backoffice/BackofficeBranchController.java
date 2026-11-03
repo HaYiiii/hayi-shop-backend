@@ -1,5 +1,6 @@
 package vn.hayi.shop.branch.web.backoffice;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -14,6 +15,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import tools.jackson.databind.JsonNode;
+import vn.hayi.shop.branch.application.BranchChanges;
 import vn.hayi.shop.branch.application.BranchService;
 import vn.hayi.shop.branch.application.BranchView;
 import vn.hayi.shop.branch.application.NewBranch;
@@ -23,6 +26,8 @@ import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.PermissionEvaluator;
 import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.platform.security.RequiresPermission;
+import vn.hayi.shop.platform.web.MergePatch;
+import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.BranchesApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.AddressInputDto;
@@ -32,12 +37,22 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchStatusDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.GeoPointDto;
 import vn.hayi.shop.shared.actor.ActorContext;
+import vn.hayi.shop.shared.concurrency.ExpectedVersion;
+import vn.hayi.shop.shared.patch.Change;
 
 /** Backoffice Branch endpoints (API 09 §1); maps the generated contract to {@link BranchService}. */
 @RestController
 class BackofficeBranchController implements BranchesApi {
 
 	private static final String BRANCHES = "/api/backoffice/v1/branches/";
+
+	private static final BigDecimal LAT_MIN = BigDecimal.valueOf(-90);
+
+	private static final BigDecimal LAT_MAX = BigDecimal.valueOf(90);
+
+	private static final BigDecimal LNG_MIN = BigDecimal.valueOf(-180);
+
+	private static final BigDecimal LNG_MAX = BigDecimal.valueOf(180);
 
 	private final BranchService branches;
 
@@ -82,6 +97,42 @@ class BackofficeBranchController implements BranchesApi {
 		return ResponseEntity.ok(new BranchListDto(items));
 	}
 
+	@Override
+	@RequiresPermission(Permission.BRANCH_MANAGE)
+	public ResponseEntity<BranchDto> updateBranch(UUID branchId, JsonNode body, String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.require(ifMatch);
+		BranchChanges changes = toChanges(body);
+		AuthenticatedSession session = AuthenticatedSession.require();
+		ClientInfo client = ClientInfo.from(this.request);
+		BranchView branch = this.branches.update(branchId, changes, expected,
+				ActorContext.staff(session.userId(), null), client.ipAddress(), client.userAgent());
+		return ResponseEntity.ok().eTag(eTag(branch)).body(toDto(branch));
+	}
+
+	/** Field limits follow ERD 03 and the {@code BranchPatch} schema; anything else in the body is refused. */
+	private static BranchChanges toChanges(JsonNode body) {
+		MergePatch patch = MergePatch.of(body);
+		Change<String> name = patch.requiredText("name", 128);
+		Address address = patch.mergedObject("address", nested -> new Address(nested.requiredText("line", 255),
+				nested.optionalText("ward", 128), nested.optionalText("district", 128),
+				nested.requiredText("province", 128)));
+		if (address == null) {
+			address = new Address(Change.keep(), Change.keep(), Change.keep(), Change.keep());
+		}
+		Change<BranchChanges.Location> location = patch.replacedObject("location",
+				nested -> new BranchChanges.Location(nested.requiredDecimal("lat", LAT_MIN, LAT_MAX),
+						nested.requiredDecimal("lng", LNG_MIN, LNG_MAX)));
+		Change<String> phone = patch.optionalText("phone", 20);
+		Change<String> email = patch.optionalEmail("email", 255);
+		patch.validate();
+		return new BranchChanges(name, address.line(), address.ward(), address.district(), address.province(),
+				location, phone, email);
+	}
+
+	private record Address(Change<String> line, Change<String> ward, Change<String> district,
+			Change<String> province) {
+	}
+
 	private static NewBranch toNewBranch(BranchCreateRequestDto body) {
 		AddressInputDto address = body.getAddress();
 		GeoPointDto location = body.getLocation();
@@ -100,7 +151,7 @@ class BackofficeBranchController implements BranchesApi {
 	}
 
 	private static String eTag(BranchView branch) {
-		return "\"v" + branch.version() + "\"";
+		return VersionTags.of(branch.version());
 	}
 
 	private static OffsetDateTime utc(Instant instant) {

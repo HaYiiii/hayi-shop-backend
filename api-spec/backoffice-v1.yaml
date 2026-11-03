@@ -316,6 +316,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Branches]
+      operationId: updateBranch
+      summary: Edit a Branch's name, address, contact and coordinates
+      description: |
+        `BRANCH_MANAGE` at that Branch. JSON Merge Patch (API 09 §1.2, Decision O): a missing key keeps the value,
+        `null` clears an optional field. `branchCode`, `status`, `timezone` or any unknown key → `400`. Requires
+        `If-Match: "v{n}"`: missing → `428 PRECONDITION_REQUIRED`, stale → `412 VERSION_CONFLICT`. A `CLOSED`
+        Branch → `409 BRANCH_INVALID_TRANSITION`. Changes are audited; a patch that changes nothing keeps the
+        version. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/BranchPatch' }
+      responses:
+        '200':
+          description: The Branch after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branch' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
 components:
   securitySchemes:
     accessCookie:
@@ -339,6 +372,14 @@ components:
       required: false
       description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        `"v{version}"` from the last `ETag` (API README §8). Required by the server on config edits: missing →
+        `428 PRECONDITION_REQUIRED`; any other version, weak tag or `*` → `412 VERSION_CONFLICT`.
+      schema: { type: string, maxLength: 64 }
     BranchId:
       name: branchId
       in: path
@@ -393,6 +434,29 @@ components:
           description: Upper-cased by the server; unique and never reused.
         name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
         address: { $ref: '#/components/schemas/AddressInput' }
+        location:
+          oneOf:
+            - $ref: '#/components/schemas/GeoPoint'
+            - type: 'null'
+        phone: { type: [string, 'null'], maxLength: 20 }
+        email: { type: [string, 'null'], format: email, maxLength: 255 }
+    BranchPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        JSON Merge Patch of a Branch (API 09 §1.2). Missing key = unchanged; `null` clears `ward`, `district`,
+        `location`, `phone`, `email`. `name`, `address.line`, `address.province` cannot be `null` or blank.
+        `branchCode` cannot be changed. The server reads the raw document so that `null` and a missing key differ.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
+        address:
+          type: object
+          additionalProperties: false
+          properties:
+            line: { type: string, minLength: 1, maxLength: 255, pattern: '[\s\S]*\S[\s\S]*' }
+            ward: { type: [string, 'null'], maxLength: 128 }
+            district: { type: [string, 'null'], maxLength: 128 }
+            province: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
         location:
           oneOf:
             - $ref: '#/components/schemas/GeoPoint'
@@ -606,6 +670,21 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: '`BRANCH_CODE_TAKEN`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InvalidTransition:
+      description: '`BRANCH_INVALID_TRANSITION`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    VersionConflict:
+      description: '`VERSION_CONFLICT` — `If-Match` is not the current version (API README §8)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PreconditionRequired:
+      description: '`PRECONDITION_REQUIRED` — `If-Match` is missing (API README §8)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

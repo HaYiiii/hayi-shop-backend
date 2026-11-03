@@ -90,6 +90,8 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 			"sourceFolder" to "src/main/java",
 		)
 		globalProperties = mapOf("apis" to "", "models" to "", "supportingFiles" to "false")
+		// Merge Patch bodies (API README §3) must tell a missing key from null, which a generated DTO cannot.
+		schemaMappings = mapOf("BranchPatch" to "tools.jackson.databind.JsonNode")
 	}
 }
 

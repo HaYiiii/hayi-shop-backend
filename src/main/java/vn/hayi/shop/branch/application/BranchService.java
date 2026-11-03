@@ -17,14 +17,20 @@ import vn.hayi.shop.audit.api.AuditRecorder;
 import vn.hayi.shop.audit.api.AuditSource;
 import vn.hayi.shop.branch.domain.Branch;
 import vn.hayi.shop.branch.domain.BranchAddress;
+import vn.hayi.shop.branch.domain.BranchDiff;
+import vn.hayi.shop.branch.domain.BranchEdit;
 import vn.hayi.shop.branch.domain.BranchErrorCode;
 import vn.hayi.shop.branch.domain.BranchRepository;
 import vn.hayi.shop.branch.domain.GeoPoint;
 import vn.hayi.shop.platform.security.PermissionScope;
 import vn.hayi.shop.shared.actor.ActorContext;
+import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
 
-/** Creates and reads Branches (Branch §4.2–4.3, API 09 §1); every creation is audited in the same transaction. */
+/**
+ * Creates, edits and reads Branches (Branch §4.2–4.3, API 09 §1); every creation and edit is audited in the same
+ * transaction.
+ */
 @Service
 public class BranchService {
 
@@ -69,10 +75,39 @@ public class BranchService {
 		return BranchView.of(branch);
 	}
 
+	/**
+	 * Edits a Branch's information if it is still at {@code expected} version (API README §8); a lost race with a
+	 * concurrent edit fails the optimistic lock on flush, which the web layer reports as {@code VERSION_CONFLICT}.
+	 * Changes are audited in the same transaction with old/new values of the changed fields only (Decision O3).
+	 */
+	@Transactional
+	public BranchView update(UUID branchId, BranchChanges changes, ExpectedVersion expected, ActorContext actor,
+			String ipAddress, String userAgent) {
+		Branch branch = find(branchId);
+		expected.verify(branch.getVersion());
+		BranchDiff diff = branch.edit(new BranchEdit(changes.name(), changes.addressLine(), changes.ward(),
+				changes.district(), changes.province(),
+				changes.location().map(location -> new GeoPoint(location.lat(), location.lng())), changes.phone(),
+				changes.email()), this.clock.instant());
+		if (diff.isEmpty()) {
+			return BranchView.of(branch);
+		}
+		this.branches.saveAndFlush(branch);
+		this.audit.record(AuditEntry.of(actor, AuditSource.BACKOFFICE_WEB, "BRANCH_UPDATE", "BRANCH", branch.getId())
+			.withBranch(branch.getId())
+			.withOldValue(diff.oldValues())
+			.withNewValue(diff.newValues())
+			.withClient(ipAddress, userAgent));
+		return BranchView.of(branch);
+	}
+
 	@Transactional(readOnly = true)
 	public BranchView get(UUID branchId) {
+		return BranchView.of(find(branchId));
+	}
+
+	private Branch find(UUID branchId) {
 		return this.branches.findById(branchId)
-			.map(BranchView::of)
 			.orElseThrow(() -> new DomainException(BranchErrorCode.BRANCH_NOT_FOUND, "No Branch " + branchId));
 	}
 

@@ -11,6 +11,10 @@ public enum ErrorKind {
 	FORBIDDEN,
 	NOT_FOUND,
 	CONFLICT,
+	/** The caller's precondition (e.g. {@code If-Match}) no longer holds. */
+	PRECONDITION_FAILED,
+	/** The operation needs a precondition (e.g. {@code If-Match}) the caller did not send. */
+	PRECONDITION_REQUIRED,
 	BUSINESS_RULE,
 	TOO_MANY_REQUESTS,
 	INTERNAL
