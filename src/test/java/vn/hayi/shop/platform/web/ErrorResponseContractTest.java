@@ -131,7 +131,9 @@ class ErrorResponseContractTest {
 	@CsvSource({
 			"PROBE_NOT_FOUND, 404",
 			"PROBE_INVALID_TRANSITION, 409",
-			"PROBE_RULE_VIOLATED, 422" })
+			"PROBE_RULE_VIOLATED, 422",
+			"PROBE_VERSION_CONFLICT, 412",
+			"PROBE_PRECONDITION_REQUIRED, 428" })
 	@WithMockUser
 	void domainExceptionGetsStatusOfItsErrorKindAndKeepsModuleCode(String code, int expectedStatus) throws Exception {
 		MvcResult result = mvc.perform(get(PROBE + "/domain-error/" + code))
@@ -257,7 +259,9 @@ class ErrorResponseContractTest {
 
 		PROBE_NOT_FOUND(ErrorKind.NOT_FOUND),
 		PROBE_INVALID_TRANSITION(ErrorKind.CONFLICT),
-		PROBE_RULE_VIOLATED(ErrorKind.BUSINESS_RULE);
+		PROBE_RULE_VIOLATED(ErrorKind.BUSINESS_RULE),
+		PROBE_VERSION_CONFLICT(ErrorKind.PRECONDITION_FAILED),
+		PROBE_PRECONDITION_REQUIRED(ErrorKind.PRECONDITION_REQUIRED);
 
 		private final ErrorKind kind;
 

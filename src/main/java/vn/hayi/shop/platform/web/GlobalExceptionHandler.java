@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -55,6 +56,23 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 				.body(response.getBody());
 		}
 		return response;
+	}
+
+	/** Hand-validated bodies ({@link MergePatch}) report like bean validation: {@code errors[]} per field. */
+	@ExceptionHandler(InvalidFieldsException.class)
+	ResponseEntity<ProblemDetail> handleInvalidFields(InvalidFieldsException ex, HttpServletRequest request) {
+		ProblemDetail problem = this.problems.create(CommonErrorCode.VALIDATION_FAILED, request);
+		problem.setProperty("errors", this.problems.fieldViolations(ex.violations(), request));
+		return ResponseEntity.badRequest().body(problem);
+	}
+
+	/**
+	 * Another edit of the same version committed first (API README §8): the loser's optimistic lock fails, which is
+	 * the same outcome as a stale {@code If-Match}.
+	 */
+	@ExceptionHandler(OptimisticLockingFailureException.class)
+	ResponseEntity<ProblemDetail> handleLostUpdate(OptimisticLockingFailureException ex, HttpServletRequest request) {
+		return respond(CommonErrorCode.VERSION_CONFLICT, request);
 	}
 
 	/** {@code AUTH_REQUIRED}, or the precise cause: {@code AUTH_TOKEN_EXPIRED}, {@code AUTH_SESSION_REVOKED}. */
