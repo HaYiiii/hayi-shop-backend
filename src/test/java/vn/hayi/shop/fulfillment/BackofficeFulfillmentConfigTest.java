@@ -196,6 +196,22 @@ class BackofficeFulfillmentConfigTest {
 	}
 
 	@Test
+	void nullableKeysLeftOutMeanNull() throws Exception {
+		replace(this.admin, "\"v0\"", CONFIG);
+
+		MockHttpServletResponse updated = replace(this.admin, "\"v1\"", """
+				{"isEnabled": true, "asapEnabled": false, "maxAdvanceDays": 7, "slotDurationMinutes": 30,
+				 "sameDayCutoffMinutes": 180, "minLeadMinutes": 30}
+				""");
+
+		assertThat(updated.getStatus()).as(updated.getContentAsString()).isEqualTo(200);
+		String body = updated.getContentAsString();
+		assertThat(JsonPath.<Object>read(body, "$.groupOrderMinLeadMinutes")).isNull();
+		assertThat(JsonPath.<Object>read(body, "$.defaultSlotMaxOrders")).isNull();
+		assertThat(JsonPath.<Object>read(body, "$.pickupInstructions")).isNull();
+	}
+
+	@Test
 	void malformedBodyIsAValidationError() throws Exception {
 		assertProblem(replace(this.admin, "\"v0\"", CONFIG.replace("\"isEnabled\": true, ", "")), 400,
 				"VALIDATION_FAILED");

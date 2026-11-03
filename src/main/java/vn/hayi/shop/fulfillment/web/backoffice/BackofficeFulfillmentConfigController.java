@@ -63,11 +63,11 @@ class BackofficeFulfillmentConfigController implements FulfillmentConfigsApi {
 
 	private static FulfillmentConfigDto toDto(FulfillmentConfigView config) {
 		FulfillmentRules settings = config.rules();
-		return new FulfillmentConfigDto(settings.isEnabled(), settings.asapEnabled(), settings.maxAdvanceDays(),
-				settings.slotDurationMinutes(), settings.sameDayCutoffMinutes(), settings.minLeadMinutes(),
-				settings.groupOrderMinLeadMinutes(), settings.customerCancelCutoffMinutes(),
-				settings.defaultSlotMaxOrders(), settings.defaultSlotMaxItems(), settings.pickupInstructions(),
-				FulfillmentConfigDto.FulfillmentTypeEnum.fromValue(config.fulfillmentType()), config.version());
+		return new FulfillmentConfigDto(FulfillmentConfigDto.FulfillmentTypeEnum.fromValue(config.fulfillmentType()),
+				settings.isEnabled(), settings.asapEnabled(), settings.maxAdvanceDays(), settings.slotDurationMinutes(),
+				settings.sameDayCutoffMinutes(), settings.minLeadMinutes(), settings.groupOrderMinLeadMinutes(),
+				settings.customerCancelCutoffMinutes(), settings.defaultSlotMaxOrders(), settings.defaultSlotMaxItems(),
+				settings.pickupInstructions(), config.version());
 	}
 
 }

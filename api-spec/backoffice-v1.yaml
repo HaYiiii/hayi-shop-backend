@@ -857,10 +857,10 @@ components:
           items: { $ref: '#/components/schemas/HourOverride' }
     FulfillmentConfigInput:
       type: object
-      description: The whole config (API 09 §2); value rules are checked by the server (422, Decision R3).
-      required: [isEnabled, asapEnabled, maxAdvanceDays, slotDurationMinutes, sameDayCutoffMinutes, minLeadMinutes,
-        groupOrderMinLeadMinutes, customerCancelCutoffMinutes, defaultSlotMaxOrders, defaultSlotMaxItems,
-        pickupInstructions]
+      description: |
+        The whole config (API 09 §2); value rules are checked by the server (422, Decision R3). A nullable key that is
+        left out means `null` (Decision R2).
+      required: [isEnabled, asapEnabled, maxAdvanceDays, slotDurationMinutes, sameDayCutoffMinutes, minLeadMinutes]
       properties:
         isEnabled: { type: boolean }
         asapEnabled: { type: boolean, description: 'Stored only; ordering is scheduled in the MVP.' }
@@ -874,13 +874,25 @@ components:
         defaultSlotMaxItems: { type: [integer, 'null'], format: int32, description: '`null` = no limit.' }
         pickupInstructions: { type: [string, 'null'] }
     FulfillmentConfig:
-      allOf:
-        - $ref: '#/components/schemas/FulfillmentConfigInput'
-        - type: object
-          required: [fulfillmentType, version]
-          properties:
-            fulfillmentType: { type: string, enum: [PICKUP] }
-            version: { type: integer, format: int64, description: '`0` until first saved (Decision R1).' }
+      type: object
+      description: A config as read; every key present, nullable ones may be `null`.
+      required: [fulfillmentType, isEnabled, asapEnabled, maxAdvanceDays, slotDurationMinutes, sameDayCutoffMinutes,
+        minLeadMinutes, groupOrderMinLeadMinutes, customerCancelCutoffMinutes, defaultSlotMaxOrders,
+        defaultSlotMaxItems, pickupInstructions, version]
+      properties:
+        fulfillmentType: { type: string, enum: [PICKUP] }
+        isEnabled: { type: boolean }
+        asapEnabled: { type: boolean }
+        maxAdvanceDays: { type: integer, format: int32 }
+        slotDurationMinutes: { type: integer, format: int32 }
+        sameDayCutoffMinutes: { type: integer, format: int32 }
+        minLeadMinutes: { type: integer, format: int32 }
+        groupOrderMinLeadMinutes: { type: [integer, 'null'], format: int32 }
+        customerCancelCutoffMinutes: { type: [integer, 'null'], format: int32 }
+        defaultSlotMaxOrders: { type: [integer, 'null'], format: int32 }
+        defaultSlotMaxItems: { type: [integer, 'null'], format: int32 }
+        pickupInstructions: { type: [string, 'null'] }
+        version: { type: integer, format: int64, description: '`0` until first saved (Decision R1).' }
     FulfillmentConfigList:
       type: object
       required: [items]
