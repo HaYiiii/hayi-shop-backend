@@ -446,6 +446,121 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /branches/{branchId}/business-hours:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [Branches]
+      operationId: getBranchBusinessHours
+      summary: Weekly hours and the overrides from today on
+      description: '`BRANCH_VIEW` at that Branch. The `ETag` is the Branch version, for `If-Match` on edits (Decision Q4).'
+      responses:
+        '200':
+          description: The Branch's business hours.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchBusinessHours' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Branches]
+      operationId: replaceBranchBusinessHours
+      summary: Replace the whole weekly schedule
+      description: |
+        `BRANCH_MANAGE` at that Branch. Requires `If-Match` (missing → `428`, stale → `412`). Intervals of one day must
+        not overlap; touching is fine; `open < close`, latest `23:59` → otherwise `422 BRANCH_HOURS_INVALID` with
+        `errors[]` (Decision Q2). A `CLOSED` Branch → `409`. Bumps the Branch version; audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BusinessHoursReplaceRequest' }
+      responses:
+        '200':
+          description: The business hours after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchBusinessHours' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/HoursInvalid' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/business-hour-overrides:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    post:
+      tags: [Branches]
+      operationId: putBranchHourOverride
+      summary: Set the hours of one date, replacing its previous override
+      description: |
+        `BRANCH_MANAGE` at that Branch. `isClosed = true` with no intervals closes the day; otherwise ≥ 1 interval.
+        A date in the past (`Asia/Ho_Chi_Minh`) or invalid intervals → `422 BRANCH_HOURS_INVALID` (Decision Q2–Q3).
+        Optional `If-Match`. Bumps the Branch version; audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HourOverrideRequest' }
+      responses:
+        '200':
+          description: The business hours after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchBusinessHours' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/HoursInvalid' }
+  /branches/{branchId}/business-hour-overrides/{date}:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: date
+        in: path
+        required: true
+        schema: { type: string, format: date }
+    delete:
+      tags: [Branches]
+      operationId: deleteBranchHourOverride
+      summary: Remove the override of one date
+      description: |
+        `BRANCH_MANAGE` at that Branch. No override that date → `404 BRANCH_HOURS_OVERRIDE_NOT_FOUND` (Decision Q3).
+        Optional `If-Match`. Bumps the Branch version; audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The business hours after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchBusinessHours' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
 components:
   securitySchemes:
     accessCookie:
@@ -619,6 +734,65 @@ components:
       oneOf:
         - $ref: '#/components/schemas/BranchOpenCommitmentsProblem'
         - $ref: '#/components/schemas/Problem'
+    TimeOfDay:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: '`HH:mm`, `00:00`–`23:59` (no `24:00`, Decision Q2).'
+    TimeInterval:
+      type: object
+      required: [open, close]
+      properties:
+        open: { $ref: '#/components/schemas/TimeOfDay' }
+        close: { $ref: '#/components/schemas/TimeOfDay' }
+    WeeklyInterval:
+      type: object
+      required: [dayOfWeek, open, close]
+      properties:
+        dayOfWeek: { type: integer, minimum: 1, maximum: 7, description: '1 = Monday … 7 = Sunday (ISO-8601).' }
+        open: { $ref: '#/components/schemas/TimeOfDay' }
+        close: { $ref: '#/components/schemas/TimeOfDay' }
+    BusinessHoursReplaceRequest:
+      type: object
+      required: [weekly]
+      properties:
+        weekly:
+          type: array
+          maxItems: 70
+          description: The whole week; a day without intervals is closed.
+          items: { $ref: '#/components/schemas/WeeklyInterval' }
+    HourOverrideRequest:
+      type: object
+      required: [date, isClosed, intervals]
+      properties:
+        date: { type: string, format: date }
+        isClosed: { type: boolean }
+        intervals:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/TimeInterval' }
+        reason: { type: [string, 'null'], maxLength: 255 }
+    HourOverride:
+      type: object
+      required: [date, isClosed, intervals, reason]
+      properties:
+        date: { type: string, format: date }
+        isClosed: { type: boolean }
+        intervals:
+          type: array
+          items: { $ref: '#/components/schemas/TimeInterval' }
+        reason: { type: [string, 'null'] }
+    BranchBusinessHours:
+      type: object
+      required: [weekly, overrides]
+      properties:
+        weekly:
+          type: array
+          description: Sorted by day, then opening time.
+          items: { $ref: '#/components/schemas/WeeklyInterval' }
+        overrides:
+          type: array
+          description: Overrides from today (`Asia/Ho_Chi_Minh`) on, sorted by date.
+          items: { $ref: '#/components/schemas/HourOverride' }
     BranchList:
       type: object
       required: [items]
@@ -799,7 +973,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     NotFound:
-      description: '`BRANCH_NOT_FOUND`'
+      description: '`BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -818,6 +992,11 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/BranchLifecycleProblem' }
+    HoursInvalid:
+      description: '`BRANCH_HOURS_INVALID` with `errors[]` (Decision Q2)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     VersionConflict:
       description: '`VERSION_CONFLICT` — `If-Match` is not the current version (API README §8)'
       content:
