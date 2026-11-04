@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
@@ -148,20 +149,39 @@ public class BranchFulfillmentConfig implements Persistable<UUID>, BranchOwned {
 		return true;
 	}
 
+	/** The overrides of {@code date}, by start (a closed day is one). */
+	public List<ScheduleOverride> getOverridesOn(LocalDate date) {
+		return getOverridesFrom(date).stream().filter(override -> override.getDate().equals(date)).toList();
+	}
+
 	/**
-	 * Sets one date's overrides, replacing the date's previous ones, which are returned (Decision S3).
-	 * {@code branchHours} are the Branch's actual open ranges on that date.
+	 * Sets one date's overrides, replacing the date's previous ones (Decision S3); {@code branchHours} are the
+	 * Branch's actual open ranges on that date. The same hours in any window order change nothing: returns
+	 * {@code false}, version and override ids unchanged.
 	 */
-	public List<ScheduleOverride> putOverride(DateOverride override, LocalDate today, List<TimeWindow> branchHours,
-			Instant now) {
+	public boolean putOverride(DateOverride override, LocalDate today, List<TimeWindow> branchHours, Instant now) {
 		ScheduleRules.checkOverride(override, today, branchHours);
-		List<ScheduleOverride> previous = this.overrides.stream()
-			.filter(existing -> existing.getDate().equals(override.date()))
-			.toList();
+		List<ScheduleOverride> previous = getOverridesOn(override.date());
+		if (!previous.isEmpty() && asDateOverride(previous).equals(normalized(override))) {
+			return false;
+		}
 		this.overrides.removeAll(previous);
 		this.overrides.addAll(ScheduleOverride.of(override, now));
 		this.updatedAt = now;
-		return previous;
+		return true;
+	}
+
+	private static DateOverride asDateOverride(List<ScheduleOverride> rows) {
+		ScheduleOverride first = rows.getFirst();
+		return normalized(new DateOverride(first.getDate(), first.isClosed(),
+				rows.stream().map(ScheduleOverride::getWindow).filter(Objects::nonNull).toList(), first.getMaxOrders(),
+				first.getMaxItems(), first.getReason()));
+	}
+
+	private static DateOverride normalized(DateOverride override) {
+		return new DateOverride(override.date(), override.closed(),
+				override.windows().stream().sorted(Comparator.comparing(TimeWindow::start)).toList(),
+				override.maxOrders(), override.maxItems(), override.reason());
 	}
 
 	/**

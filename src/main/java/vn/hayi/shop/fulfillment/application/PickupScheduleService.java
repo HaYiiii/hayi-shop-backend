@@ -86,7 +86,10 @@ public class PickupScheduleService {
 		return view(config);
 	}
 
-	/** Sets one date's overrides, replacing its previous ones; {@code expected} is optional (S3). */
+	/**
+	 * Sets one date's overrides, replacing its previous ones; {@code expected} is optional. The same hours again change
+	 * nothing: no version bump, no Audit (S3).
+	 */
 	@Transactional
 	public PickupScheduleView putOverride(UUID branchId, String fulfillmentType, OverrideInput input,
 			ExpectedVersion expected, ActorContext actor, String ipAddress, String userAgent) {
@@ -97,12 +100,14 @@ public class PickupScheduleService {
 		DateOverride override = new DateOverride(input.date(), input.isClosed(),
 				input.intervals().stream().map(window -> new TimeWindow(window.start(), window.end())).toList(),
 				input.maxOrders(), input.maxItems(), input.reason());
-		List<ScheduleOverride> previous = config.putOverride(override, today(),
-				windows(this.openingHours.on(branchId, input.date())), this.clock.instant());
+		List<ScheduleOverride> previous = config.getOverridesOn(input.date());
+		boolean changed = config.putOverride(override, today(), windows(this.openingHours.on(branchId, input.date())),
+				this.clock.instant());
+		if (!changed) {
+			return view(config);
+		}
 		this.configs.save(config);
-		List<ScheduleOverride> current = config.getOverridesFrom(input.date()).stream()
-			.filter(saved -> saved.getDate().equals(input.date()))
-			.toList();
+		List<ScheduleOverride> current = config.getOverridesOn(input.date());
 		record(config, "FULFILLMENT_OVERRIDE_PUT", overrideValue(input.date(), previous),
 				overrideValue(input.date(), current), actor, ipAddress, userAgent);
 		return view(config);

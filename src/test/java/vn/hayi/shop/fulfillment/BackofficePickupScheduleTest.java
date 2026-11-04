@@ -238,6 +238,26 @@ class BackofficePickupScheduleTest {
 	}
 
 	@Test
+	void identicalOverrideKeepsVersionAndIds() throws Exception {
+		String first = override(null, """
+				{"date": "%s", "isClosed": false, "maxOrders": 20, "reason": "Lễ",
+				 "intervals": [{"start": "07:00", "end": "09:00"}, {"start": "10:00", "end": "12:00"}]}
+				""".formatted(this.nextMonday)).getContentAsString();
+
+		// The same windows in another order are the same override (Decision S3).
+		MockHttpServletResponse same = override("\"v1\"", """
+				{"date": "%s", "isClosed": false, "maxOrders": 20, "maxItems": null, "reason": "Lễ",
+				 "intervals": [{"start": "10:00", "end": "12:00"}, {"start": "07:00", "end": "09:00"}]}
+				""".formatted(this.nextMonday));
+
+		assertThat(same.getStatus()).as(same.getContentAsString()).isEqualTo(200);
+		assertThat(same.getHeader("ETag")).isEqualTo("\"v1\"");
+		assertThat(JsonPath.<List<String>>read(same.getContentAsString(), "$.overrides[*].overrideId"))
+			.isEqualTo(JsonPath.read(first, "$.overrides[*].overrideId"));
+		assertThat(audits("FULFILLMENT_OVERRIDE_PUT")).hasSize(1);
+	}
+
+	@Test
 	void overrideIsCheckedAgainstThatDaysBranchHours() throws Exception {
 		// The Branch closes early on that Monday.
 		this.auth.perform(post(BRANCHES + "/" + this.branchId + "/business-hour-overrides")
