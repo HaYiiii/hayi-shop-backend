@@ -53,6 +53,9 @@ class FulfillmentConfigFirstSaveRaceTest {
 	@Autowired
 	BranchService branches;
 
+	@Autowired
+	OverbookingCheck overbooking;
+
 	@Test
 	void firstSaveThatLostTheRaceIsAVersionConflict() {
 		UUID branchId = this.branches.create(new NewBranch("T-" + UUID.randomUUID().toString().substring(0, 8)
@@ -60,7 +63,7 @@ class FulfillmentConfigFirstSaveRaceTest {
 			.branchId();
 		this.service.replace(branchId, "PICKUP", RULES, new ExpectedVersion(0), OWNER, null, null);
 		FulfillmentConfigService late = new FulfillmentConfigService(new FulfillmentConfigStore(staleReads(this.configs)), this.directory,
-				this.audit, Clock.systemUTC());
+				this.audit, Clock.systemUTC(), this.overbooking);
 
 		assertThatThrownBy(() -> late.replace(branchId, "PICKUP",
 				new FulfillmentRules(true, false, 3, 15, 180, 30, null, null, null, null, null), new ExpectedVersion(0),

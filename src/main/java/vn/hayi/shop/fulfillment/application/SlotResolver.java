@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -91,24 +92,46 @@ class SlotResolver implements PickupSlots {
 		int lead = (query.orderType() == OrderType.GROUP && settings.groupOrderMinLeadMinutes() != null)
 				? settings.groupOrderMinLeadMinutes() : settings.minLeadMinutes();
 		for (LocalDate date : from.datesUntil(to.plusDays(1)).toList()) {
-			days.add(day(query, config.get(), settings, date, now, lead, used));
+			days.add(day(query.branchId(), config.get(), date, now, lead, used, query.itemCount()));
 		}
 		return new SlotCalendar(query.branchId(), days);
 	}
 
-	private SlotDay day(SlotQuery query, BranchFulfillmentConfig config, FulfillmentSettings settings, LocalDate date,
-			LocalDateTime now, int lead, Map<SlotKey, UsedCapacity> used) {
-		List<CapacityWindow> windows = config.windowsOn(date);
-		if (windows.isEmpty()) {
+	@Override
+	@Transactional(readOnly = true)
+	public SlotDay capacityOn(UUID branchId, LocalDate date) {
+		this.branches.requireExists(branchId);
+		Optional<BranchFulfillmentConfig> config = this.configs.find(branchId, FulfillmentType.PICKUP);
+		if (config.isEmpty()) {
 			return new SlotDay(date, false, List.of());
 		}
-		List<TimeWindow> branchHours = this.openingHours.on(query.branchId(), date).stream()
+		LocalDateTime now = LocalDateTime.ofInstant(this.clock.instant(), BranchTime.DEFAULT_ZONE);
+		Map<SlotKey, UsedCapacity> used = this.usage.between(branchId, FulfillmentType.PICKUP, date, date);
+		return day(branchId, config.get(), date, now, config.get().settings().minLeadMinutes(), used, null);
+	}
+
+	/**
+	 * The slots {@code config} generates on {@code date}, cut to that day's Branch hours (Decision N4, T3); the one
+	 * place slots are generated, for customers, staff and the overbooking check alike.
+	 */
+	List<SlotCandidate> candidatesOn(UUID branchId, BranchFulfillmentConfig config, LocalDate date) {
+		List<CapacityWindow> windows = config.windowsOn(date);
+		if (windows.isEmpty()) {
+			return List.of();
+		}
+		List<TimeWindow> branchHours = this.openingHours.on(branchId, date).stream()
 			.map(interval -> new TimeWindow(interval.open(), interval.close()))
 			.toList();
-		List<PickupSlot> slots = SlotPlanner.slots(windows, branchHours, settings.slotDurationMinutes()).stream()
+		return SlotPlanner.slots(windows, branchHours, config.settings().slotDurationMinutes());
+	}
+
+	private SlotDay day(UUID branchId, BranchFulfillmentConfig config, LocalDate date, LocalDateTime now, int lead,
+			Map<SlotKey, UsedCapacity> used, Integer itemCount) {
+		FulfillmentSettings settings = config.settings();
+		List<PickupSlot> slots = candidatesOn(branchId, config, date).stream()
 			.map(candidate -> slot(date, candidate,
 					used.getOrDefault(new SlotKey(date, candidate.slot().start()), UsedCapacity.NONE), now,
-					settings.sameDayCutoffMinutes(), lead, query.itemCount()))
+					settings.sameDayCutoffMinutes(), lead, itemCount))
 			.toList();
 		return new SlotDay(date, !slots.isEmpty(), slots);
 	}

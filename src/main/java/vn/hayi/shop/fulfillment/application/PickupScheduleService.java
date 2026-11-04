@@ -50,20 +50,23 @@ public class PickupScheduleService {
 
 	private final Clock clock;
 
+	private final OverbookingCheck overbooking;
+
 	PickupScheduleService(FulfillmentConfigStore configs, BranchDirectory branches, BranchOpeningHours openingHours,
-			AuditRecorder audit, Clock clock) {
+			AuditRecorder audit, Clock clock, OverbookingCheck overbooking) {
 		this.configs = configs;
 		this.branches = branches;
 		this.openingHours = openingHours;
 		this.audit = audit;
 		this.clock = clock;
+		this.overbooking = overbooking;
 	}
 
 	@Transactional(readOnly = true)
 	public PickupScheduleView get(UUID branchId, String fulfillmentType) {
 		this.branches.requireExists(branchId);
 		FulfillmentType type = FulfillmentConfigStore.supportedType(fulfillmentType);
-		return view(this.configs.findOrDefault(branchId, type, this.clock.instant()));
+		return view(this.configs.findOrDefault(branchId, type, this.clock.instant()), List.of());
 	}
 
 	/** Replaces the week; {@code expected} is required; {@code "v0"} also saves the default config (S1–S2). */
@@ -78,12 +81,12 @@ public class PickupScheduleService {
 					window.maxOrders(), window.maxItems()))
 			.toList(), day -> windows(this.openingHours.weekly(branchId, DayOfWeek.of(day))), this.clock.instant());
 		if (!changed) {
-			return view(config);
+			return view(config, this.overbooking.after(config));
 		}
 		this.configs.save(config);
 		record(config, "FULFILLMENT_SCHEDULE_REPLACE", Map.of("weekly", weekly(previous)),
 				Map.of("weekly", weekly(config.getWeeklySchedule())), actor, ipAddress, userAgent);
-		return view(config);
+		return view(config, this.overbooking.after(config));
 	}
 
 	/**
@@ -104,13 +107,13 @@ public class PickupScheduleService {
 		boolean changed = config.putOverride(override, today(), windows(this.openingHours.on(branchId, input.date())),
 				this.clock.instant());
 		if (!changed) {
-			return view(config);
+			return view(config, this.overbooking.after(config));
 		}
 		this.configs.save(config);
 		List<ScheduleOverride> current = config.getOverridesOn(input.date());
 		record(config, "FULFILLMENT_OVERRIDE_PUT", overrideValue(input.date(), previous),
 				overrideValue(input.date(), current), actor, ipAddress, userAgent);
-		return view(config);
+		return view(config, this.overbooking.after(config));
 	}
 
 	/**
@@ -134,7 +137,7 @@ public class PickupScheduleService {
 		this.configs.save(config);
 		record(config, "FULFILLMENT_OVERRIDE_DELETE", overrideValue(removed.getDate(), List.of(removed)),
 				Map.of("overrideId", overrideId.toString()), actor, ipAddress, userAgent);
-		return view(config);
+		return view(config, this.overbooking.after(config));
 	}
 
 	private BranchFulfillmentConfig editable(UUID branchId, String fulfillmentType) {
@@ -144,7 +147,7 @@ public class PickupScheduleService {
 		return this.configs.findOrDefault(branchId, type, this.clock.instant());
 	}
 
-	private PickupScheduleView view(BranchFulfillmentConfig config) {
+	private PickupScheduleView view(BranchFulfillmentConfig config, List<OverbookedSlotView> overbooked) {
 		List<ScheduleWindowInput> weekly = config.getWeeklySchedule().stream()
 			.map(window -> new ScheduleWindowInput(window.dayOfWeek(), window.window().start(), window.window().end(),
 					window.maxOrders(), window.maxItems()))
@@ -155,7 +158,7 @@ public class PickupScheduleService {
 					(override.getWindow() != null) ? override.getWindow().end() : null, override.getMaxOrders(),
 					override.getMaxItems(), override.getReason()))
 			.toList();
-		return new PickupScheduleView(FulfillmentConfigStore.versionOf(config), weekly, overrides);
+		return new PickupScheduleView(FulfillmentConfigStore.versionOf(config), weekly, overrides, overbooked);
 	}
 
 	private void record(BranchFulfillmentConfig config, String action, Map<String, ?> oldValue,
