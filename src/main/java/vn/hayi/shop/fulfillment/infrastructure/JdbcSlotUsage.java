@@ -3,15 +3,18 @@ package vn.hayi.shop.fulfillment.infrastructure;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import vn.hayi.shop.fulfillment.domain.ClaimedSlot;
 import vn.hayi.shop.fulfillment.domain.FulfillmentType;
 import vn.hayi.shop.fulfillment.domain.SlotKey;
 import vn.hayi.shop.fulfillment.domain.SlotUsage;
+import vn.hayi.shop.fulfillment.domain.TimeWindow;
 import vn.hayi.shop.fulfillment.domain.UsedCapacity;
 import vn.hayi.shop.platform.persistence.UuidBinary;
 
@@ -43,6 +46,22 @@ class JdbcSlotUsage implements SlotUsage {
 			.list()
 			.forEach(entry -> used.put(entry.getKey(), entry.getValue()));
 		return used;
+	}
+
+	@Override
+	public List<ClaimedSlot> claimedFrom(UUID branchId, FulfillmentType type, LocalDate from) {
+		return this.jdbc.sql("""
+				SELECT slot_date, CAST(slot_start_time AS CHAR) AS slot_start, CAST(slot_end_time AS CHAR) AS slot_end,
+				  used_orders, used_items
+				FROM ful_slot_capacity
+				WHERE branch_id = ? AND fulfillment_type = ? AND slot_date >= ? AND (used_orders > 0 OR used_items > 0)
+				ORDER BY slot_date, slot_start_time
+				""")
+			.params(UuidBinary.toBytes(branchId), type.name(), from)
+			.query((rs, row) -> new ClaimedSlot(rs.getObject("slot_date", LocalDate.class),
+					new TimeWindow(LocalTime.parse(rs.getString("slot_start")), LocalTime.parse(rs.getString("slot_end"))),
+					new UsedCapacity(rs.getInt("used_orders"), rs.getInt("used_items"))))
+			.list();
 	}
 
 }

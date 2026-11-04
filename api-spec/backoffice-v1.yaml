@@ -767,6 +767,37 @@ paths:
         '409': { $ref: '#/components/responses/InvalidTransition' }
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/ScheduleInvalid' }
+  /branches/{branchId}/fulfillment/capacity:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [FulfillmentConfigs]
+      operationId: getFulfillmentCapacity
+      summary: Real per-slot capacity of one day
+      description: |
+        `BRANCH_VIEW` at that Branch. Any date (past or beyond the horizon) of any existing Branch; the same slots and
+        statuses as the public view, with the numbers (Decision V1). Unknown Branch → `404 BRANCH_NOT_FOUND`;
+        `fulfillmentType` other than `PICKUP` → `422 FULFILLMENT_CONFIG_INVALID`.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: Defaults to today (`Asia/Ho_Chi_Minh`).
+          schema: { type: string, format: date }
+        - name: fulfillmentType
+          in: query
+          required: false
+          schema: { type: string, maxLength: 32, default: PICKUP }
+      responses:
+        '200':
+          description: The slots of that day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapacityView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/FulfillmentConfigInvalid' }
 components:
   securitySchemes:
     accessCookie:
@@ -1022,7 +1053,7 @@ components:
       description: A config as read; every key present, nullable ones may be `null`.
       required: [fulfillmentType, isEnabled, asapEnabled, maxAdvanceDays, slotDurationMinutes, sameDayCutoffMinutes,
         minLeadMinutes, groupOrderMinLeadMinutes, customerCancelCutoffMinutes, defaultSlotMaxOrders,
-        defaultSlotMaxItems, pickupInstructions, version]
+        defaultSlotMaxItems, pickupInstructions, version, overbookedSlots]
       properties:
         fulfillmentType: { type: string, enum: [PICKUP] }
         isEnabled: { type: boolean }
@@ -1037,6 +1068,10 @@ components:
         defaultSlotMaxItems: { type: [integer, 'null'], format: int32 }
         pickupInstructions: { type: [string, 'null'] }
         version: { type: integer, format: int64, description: '`0` until first saved (Decision R1).' }
+        overbookedSlots:
+          type: array
+          description: 'Filled after a change (Decision V2); empty when read.'
+          items: { $ref: '#/components/schemas/OverbookedSlot' }
     ScheduleWindow:
       type: object
       required: [dayOfWeek, start, end]
@@ -1087,8 +1122,12 @@ components:
         reason: { type: [string, 'null'] }
     PickupSchedule:
       type: object
-      required: [weekly, overrides]
+      required: [weekly, overrides, overbookedSlots]
       properties:
+        overbookedSlots:
+          type: array
+          description: 'Filled after a change (Decision V2); empty when read.'
+          items: { $ref: '#/components/schemas/OverbookedSlot' }
         weekly:
           type: array
           description: Sorted by day, then start.
@@ -1097,6 +1136,43 @@ components:
           type: array
           description: From today (`Asia/Ho_Chi_Minh`) on, sorted by date then start.
           items: { $ref: '#/components/schemas/ScheduleOverride' }
+    CapacitySlotStatus:
+      type: string
+      enum: [AVAILABLE, NEARLY_FULL, FULL, CUTOFF_PASSED, CLOSED]
+    CapacitySlot:
+      type: object
+      required: [slotStart, slotEnd, usedOrders, maxOrders, usedItems, maxItems, status]
+      properties:
+        slotStart: { type: string, description: '`HH:mm`, Branch local time.' }
+        slotEnd: { type: string }
+        usedOrders: { type: integer, format: int32 }
+        maxOrders: { type: [integer, 'null'], format: int32, description: '`null` = no limit.' }
+        usedItems: { type: integer, format: int32 }
+        maxItems: { type: [integer, 'null'], format: int32, description: '`null` = no limit.' }
+        status: { $ref: '#/components/schemas/CapacitySlotStatus' }
+    CapacityView:
+      type: object
+      required: [date, fulfillmentType, slots]
+      properties:
+        date: { type: string, format: date }
+        fulfillmentType: { type: string, enum: [PICKUP] }
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/CapacitySlot' }
+    OverbookedSlot:
+      type: object
+      description: |
+        A slot from today on whose claimed orders or items exceed its capacity after a change; a claimed slot that is
+        no longer generated has max `0`. Nothing claimed is cancelled or moved (Decision V2).
+      required: [date, slotStart, slotEnd, usedOrders, maxOrders, usedItems, maxItems]
+      properties:
+        date: { type: string, format: date }
+        slotStart: { type: string }
+        slotEnd: { type: string }
+        usedOrders: { type: integer, format: int32 }
+        maxOrders: { type: [integer, 'null'], format: int32 }
+        usedItems: { type: integer, format: int32 }
+        maxItems: { type: [integer, 'null'], format: int32 }
     FulfillmentConfigList:
       type: object
       required: [items]

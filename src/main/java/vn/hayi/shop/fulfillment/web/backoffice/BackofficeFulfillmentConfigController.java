@@ -1,5 +1,6 @@
 package vn.hayi.shop.fulfillment.web.backoffice;
 
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -12,7 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import vn.hayi.shop.fulfillment.application.FulfillmentConfigService;
 import vn.hayi.shop.fulfillment.application.FulfillmentConfigView;
+import vn.hayi.shop.fulfillment.api.SlotDay;
+import vn.hayi.shop.fulfillment.application.CapacityView;
 import vn.hayi.shop.fulfillment.application.FulfillmentRules;
+import vn.hayi.shop.fulfillment.application.OverbookedSlotView;
 import vn.hayi.shop.fulfillment.application.OverrideInput;
 import vn.hayi.shop.fulfillment.application.PickupScheduleService;
 import vn.hayi.shop.fulfillment.application.PickupScheduleView;
@@ -24,9 +28,13 @@ import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.FulfillmentConfigsApi;
+import vn.hayi.shop.platform.web.spec.backoffice.model.CapacitySlotDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.CapacitySlotStatusDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.CapacityViewDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.FulfillmentConfigDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.FulfillmentConfigInputDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.FulfillmentConfigListDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.OverbookedSlotDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.PickupScheduleDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ScheduleOverrideDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ScheduleOverrideRequestDto;
@@ -45,12 +53,15 @@ class BackofficeFulfillmentConfigController implements FulfillmentConfigsApi {
 
 	private final PickupScheduleService schedules;
 
+	private final CapacityView capacity;
+
 	private final HttpServletRequest request;
 
 	BackofficeFulfillmentConfigController(FulfillmentConfigService configs, PickupScheduleService schedules,
-			HttpServletRequest request) {
+			CapacityView capacity, HttpServletRequest request) {
 		this.configs = configs;
 		this.schedules = schedules;
+		this.capacity = capacity;
 		this.request = request;
 	}
 
@@ -99,6 +110,25 @@ class BackofficeFulfillmentConfigController implements FulfillmentConfigsApi {
 				actor(), client.ipAddress(), client.userAgent()));
 	}
 
+	@Override
+	@RequiresPermission(Permission.BRANCH_VIEW)
+	public ResponseEntity<CapacityViewDto> getFulfillmentCapacity(UUID branchId, LocalDate date,
+			String fulfillmentType) {
+		SlotDay day = this.capacity.capacityOn(branchId, fulfillmentType, date);
+		List<CapacitySlotDto> slots = day.slots().stream()
+			.map(slot -> new CapacitySlotDto(text(slot.start()), text(slot.end()), slot.usedOrders(), slot.maxOrders(),
+					slot.usedItems(), slot.maxItems(), CapacitySlotStatusDto.valueOf(slot.status().name())))
+			.toList();
+		return ResponseEntity.ok(new CapacityViewDto(day.date(), CapacityViewDto.FulfillmentTypeEnum.PICKUP, slots));
+	}
+
+	private static List<OverbookedSlotDto> overbooked(List<OverbookedSlotView> slots) {
+		return slots.stream()
+			.map(slot -> new OverbookedSlotDto(slot.date(), text(slot.start()), text(slot.end()), slot.usedOrders(),
+					slot.maxOrders(), slot.usedItems(), slot.maxItems()))
+			.toList();
+	}
+
 	private static ResponseEntity<PickupScheduleDto> scheduleResponse(PickupScheduleView view) {
 		List<ScheduleWindowDto> weekly = view.weekly().stream()
 			.map(window -> new ScheduleWindowDto(window.dayOfWeek(), text(window.start()), text(window.end()))
@@ -112,7 +142,7 @@ class BackofficeFulfillmentConfigController implements FulfillmentConfigsApi {
 			.toList();
 		return ResponseEntity.ok()
 			.eTag(VersionTags.of(view.version()))
-			.body(new PickupScheduleDto(weekly, overrides));
+			.body(new PickupScheduleDto(overbooked(view.overbookedSlots()), weekly, overrides));
 	}
 
 	private static ActorContext actor() {
@@ -160,7 +190,7 @@ class BackofficeFulfillmentConfigController implements FulfillmentConfigsApi {
 				settings.isEnabled(), settings.asapEnabled(), settings.maxAdvanceDays(), settings.slotDurationMinutes(),
 				settings.sameDayCutoffMinutes(), settings.minLeadMinutes(), settings.groupOrderMinLeadMinutes(),
 				settings.customerCancelCutoffMinutes(), settings.defaultSlotMaxOrders(), settings.defaultSlotMaxItems(),
-				settings.pickupInstructions(), config.version());
+				settings.pickupInstructions(), config.version(), overbooked(config.overbookedSlots()));
 	}
 
 }

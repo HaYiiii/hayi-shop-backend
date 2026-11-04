@@ -34,12 +34,15 @@ public class FulfillmentConfigService {
 
 	private final Clock clock;
 
+	private final OverbookingCheck overbooking;
+
 	FulfillmentConfigService(FulfillmentConfigStore configs, BranchDirectory branches, AuditRecorder audit,
-			Clock clock) {
+			Clock clock, OverbookingCheck overbooking) {
 		this.configs = configs;
 		this.branches = branches;
 		this.audit = audit;
 		this.clock = clock;
+		this.overbooking = overbooking;
 	}
 
 	/** Every type the MVP takes (only {@code PICKUP}), saved or still the default. */
@@ -80,7 +83,7 @@ public class FulfillmentConfigService {
 		else {
 			config = existing.get();
 			if (!config.replace(settings, this.clock.instant())) {
-				return view(type, config);
+				return withOverbooked(view(type, config), config);
 			}
 		}
 		this.configs.save(config);
@@ -91,12 +94,19 @@ public class FulfillmentConfigService {
 			.withOldValue(diff.get(0))
 			.withNewValue(diff.get(1))
 			.withClient(ipAddress, userAgent));
-		return view(type, config);
+		return withOverbooked(view(type, config), config);
+	}
+
+	/** After a change, the slots whose claims the new capacity no longer covers (Decision V2). */
+	private FulfillmentConfigView withOverbooked(FulfillmentConfigView view, BranchFulfillmentConfig config) {
+		return new FulfillmentConfigView(view.fulfillmentType(), view.rules(), view.version(),
+				this.overbooking.after(config));
 	}
 
 	private static FulfillmentConfigView view(FulfillmentType type, BranchFulfillmentConfig config) {
-		return (config != null) ? new FulfillmentConfigView(type.name(), rules(config.settings()), config.getVersion())
-				: new FulfillmentConfigView(type.name(), rules(FulfillmentSettings.DEFAULTS), 0);
+		return (config != null)
+				? new FulfillmentConfigView(type.name(), rules(config.settings()), config.getVersion(), List.of())
+				: new FulfillmentConfigView(type.name(), rules(FulfillmentSettings.DEFAULTS), 0, List.of());
 	}
 
 	private static FulfillmentRules rules(FulfillmentSettings settings) {
