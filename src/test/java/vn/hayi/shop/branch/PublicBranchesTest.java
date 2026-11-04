@@ -119,6 +119,14 @@ class PublicBranchesTest {
 	}
 
 	@Test
+	void openFromTheOpeningMinute() throws Exception {
+		at(MONDAY, 7, 0);
+		assertThat(JsonPath.<Boolean>read(detail(), "$.openNow")).isTrue();
+		at(MONDAY, 6, 59);
+		assertThat(JsonPath.<Boolean>read(detail(), "$.openNow")).isFalse();
+	}
+
+	@Test
 	void closedDuringTheBreakAndAtClosingTime() throws Exception {
 		at(MONDAY, 15, 0);
 		assertThat(JsonPath.<Boolean>read(detail(), "$.openNow")).isFalse();
@@ -189,7 +197,11 @@ class PublicBranchesTest {
 	void responsesAreCachedFiveMinutesAndNeedNoCookie() throws Exception {
 		for (MockHttpServletResponse response : List.of(get(BRANCHES), get(BRANCHES + "/" + this.branchId))) {
 			assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
-			assertThat(response.getHeader("Cache-Control")).contains("max-age=300", "public");
+			assertThat(response.getHeader("Cache-Control")).contains("max-age=300", "public").doesNotContain("no-cache",
+					"no-store");
+			// Spring Security's default cache headers would cancel the cache.
+			assertThat(response.getHeader("Pragma")).isNull();
+			assertThat(response.getHeader("Expires")).isNull();
 		}
 	}
 
