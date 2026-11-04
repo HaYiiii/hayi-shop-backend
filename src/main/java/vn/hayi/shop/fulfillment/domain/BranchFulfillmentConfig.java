@@ -149,6 +149,32 @@ public class BranchFulfillmentConfig implements Persistable<UUID>, BranchOwned {
 		return true;
 	}
 
+	/**
+	 * The pickup windows in force on {@code date} with their capacity (Decision N4): the date's overrides if any (none
+	 * when closed), otherwise the weekly windows of that day; a capacity left {@code null} there falls back to the
+	 * config default. Empty means no pickup that day.
+	 */
+	public List<CapacityWindow> windowsOn(LocalDate date) {
+		List<ScheduleOverride> overrides = getOverridesOn(date);
+		if (!overrides.isEmpty()) {
+			return overrides.stream()
+				.filter(override -> !override.isClosed())
+				.map(override -> new CapacityWindow(override.getWindow(),
+						orDefault(override.getMaxOrders(), this.defaultSlotMaxOrders),
+						orDefault(override.getMaxItems(), this.defaultSlotMaxItems)))
+				.toList();
+		}
+		return getWeeklySchedule().stream()
+			.filter(window -> window.dayOfWeek() == date.getDayOfWeek().getValue())
+			.map(window -> new CapacityWindow(window.window(), orDefault(window.maxOrders(), this.defaultSlotMaxOrders),
+					orDefault(window.maxItems(), this.defaultSlotMaxItems)))
+			.toList();
+	}
+
+	private static Integer orDefault(Integer value, Integer fallback) {
+		return (value != null) ? value : fallback;
+	}
+
 	/** The overrides of {@code date}, by start (a closed day is one). */
 	public List<ScheduleOverride> getOverridesOn(LocalDate date) {
 		return getOverridesFrom(date).stream().filter(override -> override.getDate().equals(date)).toList();

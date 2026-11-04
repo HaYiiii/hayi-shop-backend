@@ -1,9 +1,16 @@
 package vn.hayi.shop.platform.web;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -16,6 +23,8 @@ import org.springframework.security.authentication.AuthenticationTrustResolverIm
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Controller;
+import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -66,6 +75,38 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 		ProblemDetail problem = this.problems.create(CommonErrorCode.VALIDATION_FAILED, request);
 		problem.setProperty("errors", this.problems.fieldViolations(ex.violations(), request));
 		return ResponseEntity.badRequest().body(problem);
+	}
+
+	/**
+	 * A constrained parameter (query, header, path) of a controller failed method validation → {@code 400
+	 * VALIDATION_FAILED} with one {@code errors[]} entry per parameter, like body validation (API README §6). A
+	 * violation raised beyond the web layer (a validated service, entity validation on flush) is a server bug:
+	 * {@code 500 INTERNAL_ERROR}, logged.
+	 */
+	@ExceptionHandler(ConstraintViolationException.class)
+	ResponseEntity<ProblemDetail> handleConstraintViolation(ConstraintViolationException ex,
+			HttpServletRequest request) {
+		boolean fromController = !ex.getConstraintViolations().isEmpty() && ex.getConstraintViolations()
+			.stream()
+			.allMatch(violation -> violation.getRootBeanClass() != null && AnnotatedElementUtils
+				.hasAnnotation(ClassUtils.getUserClass(violation.getRootBeanClass()), Controller.class));
+		if (!fromController) {
+			return handleUnexpected(ex, request);
+		}
+		List<InvalidFieldsException.Violation> violations = ex.getConstraintViolations().stream()
+			.map(violation -> new InvalidFieldsException.Violation(parameterName(violation),
+					violation.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName()
+						.replaceAll("([a-z0-9])([A-Z])", "$1_$2")
+						.toUpperCase(Locale.ROOT)))
+			.sorted(Comparator.comparing(InvalidFieldsException.Violation::field))
+			.toList();
+		return handleInvalidFields(new InvalidFieldsException(violations), request);
+	}
+
+	/** {@code listPickupSlots.itemCount} → {@code itemCount}. */
+	private static String parameterName(ConstraintViolation<?> violation) {
+		String path = violation.getPropertyPath().toString();
+		return path.substring(path.lastIndexOf('.') + 1);
 	}
 
 	/**
