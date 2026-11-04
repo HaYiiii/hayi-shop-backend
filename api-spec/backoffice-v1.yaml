@@ -623,6 +623,150 @@ paths:
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/FulfillmentConfigInvalid' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/fulfillment/configs/{fulfillmentType}/schedule:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: fulfillmentType
+        in: path
+        required: true
+        description: Only `PICKUP` in the MVP; anything else → `422 FULFILLMENT_CONFIG_INVALID`.
+        schema: { type: string, maxLength: 32 }
+    get:
+      tags: [FulfillmentConfigs]
+      operationId: getFulfillmentSchedule
+      summary: Weekly pickup windows and the overrides from today on
+      description: '`BRANCH_VIEW` at that Branch. The `ETag` is the config version (Decision S4).'
+      responses:
+        '200':
+          description: The schedule.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupSchedule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ScheduleInvalid' }
+  /branches/{branchId}/fulfillment/configs/{fulfillmentType}/weekly-schedule:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: fulfillmentType
+        in: path
+        required: true
+        description: Only `PICKUP` in the MVP; anything else → `422 FULFILLMENT_CONFIG_INVALID`.
+        schema: { type: string, maxLength: 32 }
+    put:
+      tags: [FulfillmentConfigs]
+      operationId: replaceFulfillmentWeeklySchedule
+      summary: Replace the weekly pickup windows with their per-slot capacity
+      description: |
+        `FULFILLMENT_CONFIG_MANAGE` at that Branch. Requires `If-Match` (config version; `"v0"` saves the default config
+        too). Errors in order: invalid values → `FULFILLMENT_CONFIG_INVALID`; overlapping windows →
+        `FULFILLMENT_SCHEDULE_OVERLAP`; a window not inside one open range of the Branch's weekly hours that day →
+        `FULFILLMENT_OUTSIDE_BRANCH_HOURS` (422 with `errors[]`, Decision S5–S6). A `CLOSED` Branch → `409`. The same
+        windows keep the version. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WeeklyScheduleReplaceRequest' }
+      responses:
+        '200':
+          description: The schedule after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupSchedule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ScheduleInvalid' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/fulfillment/configs/{fulfillmentType}/overrides:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: fulfillmentType
+        in: path
+        required: true
+        description: Only `PICKUP` in the MVP; anything else → `422 FULFILLMENT_CONFIG_INVALID`.
+        schema: { type: string, maxLength: 32 }
+    post:
+      tags: [FulfillmentConfigs]
+      operationId: putFulfillmentOverride
+      summary: Set one date's pickup windows, replacing its previous overrides
+      description: |
+        `FULFILLMENT_CONFIG_MANAGE` at that Branch. One override per window (a closed day is one override); the date's
+        older overrides are replaced (Decision S3). Same checks as the weekly schedule, against that date's actual
+        Branch hours; a past date → `FULFILLMENT_CONFIG_INVALID`. Optional `If-Match`. Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleOverrideRequest' }
+      responses:
+        '200':
+          description: The schedule after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupSchedule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ScheduleInvalid' }
+  /branches/{branchId}/fulfillment/configs/{fulfillmentType}/overrides/{overrideId}:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: fulfillmentType
+        in: path
+        required: true
+        description: Only `PICKUP` in the MVP; anything else → `422 FULFILLMENT_CONFIG_INVALID`.
+        schema: { type: string, maxLength: 32 }
+      - name: overrideId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [FulfillmentConfigs]
+      operationId: deleteFulfillmentOverride
+      summary: Remove one override
+      description: |
+        `FULFILLMENT_CONFIG_MANAGE` at that Branch. Unknown, or belonging to another Branch → the same
+        `404 FULFILLMENT_OVERRIDE_NOT_FOUND` (API README §3.1, Decision S7). Optional `If-Match`. Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The schedule after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupSchedule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ScheduleInvalid' }
 components:
   securitySchemes:
     accessCookie:
@@ -893,6 +1037,66 @@ components:
         defaultSlotMaxItems: { type: [integer, 'null'], format: int32 }
         pickupInstructions: { type: [string, 'null'] }
         version: { type: integer, format: int64, description: '`0` until first saved (Decision R1).' }
+    ScheduleWindow:
+      type: object
+      required: [dayOfWeek, start, end]
+      properties:
+        dayOfWeek: { type: integer, minimum: 1, maximum: 7, description: '1 = Monday … 7 = Sunday (ISO-8601).' }
+        start: { $ref: '#/components/schemas/TimeOfDay' }
+        end: { $ref: '#/components/schemas/TimeOfDay' }
+        maxOrders: { type: [integer, 'null'], format: int32, description: 'Per slot; `null` = config default.' }
+        maxItems: { type: [integer, 'null'], format: int32, description: 'Per slot; `null` = config default.' }
+    WeeklyScheduleReplaceRequest:
+      type: object
+      required: [weekly]
+      properties:
+        weekly:
+          type: array
+          maxItems: 70
+          items: { $ref: '#/components/schemas/ScheduleWindow' }
+    PickupWindow:
+      type: object
+      required: [start, end]
+      properties:
+        start: { $ref: '#/components/schemas/TimeOfDay' }
+        end: { $ref: '#/components/schemas/TimeOfDay' }
+    ScheduleOverrideRequest:
+      type: object
+      required: [date, isClosed, intervals]
+      properties:
+        date: { type: string, format: date }
+        isClosed: { type: boolean }
+        intervals:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/PickupWindow' }
+        maxOrders: { type: [integer, 'null'], format: int32 }
+        maxItems: { type: [integer, 'null'], format: int32 }
+        reason: { type: [string, 'null'], maxLength: 255 }
+    ScheduleOverride:
+      type: object
+      required: [overrideId, date, isClosed, start, end, maxOrders, maxItems, reason]
+      properties:
+        overrideId: { type: string, format: uuid }
+        date: { type: string, format: date }
+        isClosed: { type: boolean }
+        start: { oneOf: [ { $ref: '#/components/schemas/TimeOfDay' }, { type: 'null' } ] }
+        end: { oneOf: [ { $ref: '#/components/schemas/TimeOfDay' }, { type: 'null' } ] }
+        maxOrders: { type: [integer, 'null'], format: int32 }
+        maxItems: { type: [integer, 'null'], format: int32 }
+        reason: { type: [string, 'null'] }
+    PickupSchedule:
+      type: object
+      required: [weekly, overrides]
+      properties:
+        weekly:
+          type: array
+          description: Sorted by day, then start.
+          items: { $ref: '#/components/schemas/ScheduleWindow' }
+        overrides:
+          type: array
+          description: From today (`Asia/Ho_Chi_Minh`) on, sorted by date then start.
+          items: { $ref: '#/components/schemas/ScheduleOverride' }
     FulfillmentConfigList:
       type: object
       required: [items]
@@ -1080,7 +1284,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     NotFound:
-      description: '`BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`'
+      description: '`BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1106,6 +1310,13 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     FulfillmentConfigInvalid:
       description: '`FULFILLMENT_CONFIG_INVALID` with `errors[]` (Decision R3)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ScheduleInvalid:
+      description: |
+        `FULFILLMENT_CONFIG_INVALID`, `FULFILLMENT_SCHEDULE_OVERLAP` or `FULFILLMENT_OUTSIDE_BRANCH_HOURS`, with
+        `errors[]` (Decision S6)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
