@@ -250,6 +250,18 @@ class BackofficeCapacityTest {
 			.getContentAsString(), "$.overbookedSlots")).isEmpty();
 	}
 
+	@Test
+	void slotsThatAlreadyStartedAreNotReported() throws Exception {
+		// Today 00:00 has started whenever the test runs; a capacity change no longer affects it (Decision V2).
+		seed(this.today, at(0, 0), at(0, 30), 5, 5);
+
+		List<Map<String, Object>> overbooked = JsonPath.read(replaceWeek("\"v2\"", 2).getContentAsString(),
+				"$.overbookedSlots");
+
+		assertThat(overbooked).extracting(slot -> slot.get("date")).doesNotContain(this.today.toString());
+		assertThat(overbooked).containsExactly(overbooked(this.tomorrow, "09:00", "09:30", 3, 2, 5, 20));
+	}
+
 	private MockHttpServletResponse replaceWeek(String ifMatch, int maxOrders) throws Exception {
 		String windows = String.join(",", IntStream.rangeClosed(1, 7)
 			.mapToObj(day -> "{\"dayOfWeek\": %d, \"start\": \"09:00\", \"end\": \"11:00\", \"maxOrders\": %d}"

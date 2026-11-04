@@ -2,6 +2,7 @@ package vn.hayi.shop.fulfillment.application;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -18,9 +19,10 @@ import vn.hayi.shop.fulfillment.domain.SlotUsage;
 import vn.hayi.shop.shared.time.BranchTime;
 
 /**
- * After a config, schedule or override change: the slots from today on whose claims now exceed their capacity, or
- * that are no longer generated at all (max {@code 0}). Only reports; nothing claimed is cancelled or moved (Fulfillment
- * §8.5, Decision V2). Runs after the change is flushed, with the same slot generation as the resolver.
+ * After a config, schedule or override change: the slots not started yet whose claims now exceed their capacity, or
+ * that are no longer generated at all (max {@code 0}); a slot that has started is beyond the change's reach. Only
+ * reports; nothing claimed is cancelled or moved (Fulfillment §8.5, Decision V2). Runs after the change is flushed,
+ * with the same slot generation as the resolver.
  */
 @Component
 class OverbookingCheck {
@@ -38,10 +40,14 @@ class OverbookingCheck {
 	}
 
 	List<OverbookedSlotView> after(BranchFulfillmentConfig config) {
-		LocalDate today = BranchTime.localDate(this.clock.instant(), BranchTime.DEFAULT_ZONE);
+		LocalDateTime now = LocalDateTime.ofInstant(this.clock.instant(), BranchTime.DEFAULT_ZONE);
 		Map<LocalDate, List<SlotCandidate>> slotsByDate = new HashMap<>();
 		List<OverbookedSlotView> overbooked = new ArrayList<>();
-		for (ClaimedSlot claimed : this.usage.claimedFrom(config.getBranchId(), FulfillmentType.PICKUP, today)) {
+		for (ClaimedSlot claimed : this.usage.claimedFrom(config.getBranchId(), FulfillmentType.PICKUP,
+				now.toLocalDate())) {
+			if (!claimed.date().atTime(claimed.slot().start()).isAfter(now)) {
+				continue;
+			}
 			List<SlotCandidate> slots = slotsByDate.computeIfAbsent(claimed.date(),
 					date -> this.resolver.candidatesOn(config.getBranchId(), config, date));
 			Optional<SlotCandidate> slot = slots.stream()
