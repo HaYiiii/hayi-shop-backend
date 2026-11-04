@@ -8,9 +8,56 @@ info:
 servers:
   - url: /api/public/v1
 tags:
+  - name: PublicBranches
+    description: ACTIVE Branches a customer can order from (API 02 §1, Decision N5, U)
   - name: FulfillmentAvailability
     description: Pickup slots a customer may choose (API 02 §3, Decision N, T)
 paths:
+  /branches:
+    get:
+      tags: [PublicBranches]
+      operationId: listPublicBranches
+      summary: ACTIVE Branches, by code
+      description: |
+        No sign-in. Only `ACTIVE` Branches (Decision U1). `openNow`/`todayHours` come from today's actual hours
+        (`Asia/Ho_Chi_Minh`, override > weekly, U2); `earliestPickupAt` is the earliest bookable slot, `null` if none
+        (N5, U4). `Cache-Control: public, max-age=300`.
+      security: []
+      responses:
+        '200':
+          description: The ACTIVE Branches.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/FiveMinuteCache' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicBranchList' }
+  /branches/{branchId}:
+    get:
+      tags: [PublicBranches]
+      operationId: getPublicBranch
+      summary: One ACTIVE Branch with its weekly hours and the next 7 days' overrides
+      description: |
+        No sign-in. Unknown or not `ACTIVE` → `404 BRANCH_NOT_FOUND` (Decision U1). Overrides of today … today + 6,
+        without the internal `reason` (U3). `Cache-Control: public, max-age=300`.
+      security: []
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The Branch.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/FiveMinuteCache' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicBranchDetail' }
+        '404':
+          description: '`BRANCH_NOT_FOUND`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /branches/{branchId}/fulfillment/slots:
     get:
       tags: [FulfillmentAvailability]
@@ -72,9 +119,114 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 components:
+  headers:
+    FiveMinuteCache:
+      description: '`public, max-age=300` (API 02, Decision U1).'
+      schema: { type: string }
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    PublicFulfillmentType:
+      type: string
+      enum: [PICKUP]
+    PublicAddress:
+      type: object
+      required: [line, ward, district, province]
+      properties:
+        line: { type: string }
+        ward: { type: [string, 'null'] }
+        district: { type: [string, 'null'] }
+        province: { type: string }
+    PublicGeoPoint:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+    OpeningRange:
+      type: object
+      required: [open, close]
+      properties:
+        open: { type: string, description: '`HH:mm`, Branch local time.' }
+        close: { type: string, description: '`HH:mm`, Branch local time.' }
+    WeeklyOpening:
+      type: object
+      required: [dayOfWeek, open, close]
+      properties:
+        dayOfWeek: { type: integer, description: '1 = Monday … 7 = Sunday (ISO-8601).' }
+        open: { type: string }
+        close: { type: string }
+    PublicHourOverride:
+      type: object
+      required: [date, isClosed, intervals]
+      properties:
+        date: { type: string, format: date }
+        isClosed: { type: boolean }
+        intervals:
+          type: array
+          items: { $ref: '#/components/schemas/OpeningRange' }
+    PublicBranch:
+      type: object
+      required: [branchId, branchCode, name, address, location, phone, timezone, openNow, todayHours, fulfillmentTypes,
+        earliestPickupAt]
+      properties:
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        name: { type: string }
+        address: { $ref: '#/components/schemas/PublicAddress' }
+        location:
+          oneOf:
+            - $ref: '#/components/schemas/PublicGeoPoint'
+            - type: 'null'
+        phone: { type: [string, 'null'] }
+        timezone: { type: string, description: 'Always `Asia/Ho_Chi_Minh`.' }
+        openNow: { type: boolean, description: '`ACTIVE` does not mean open now (Branch §4.3).' }
+        todayHours:
+          type: array
+          items: { $ref: '#/components/schemas/OpeningRange' }
+        fulfillmentTypes:
+          type: array
+          items: { $ref: '#/components/schemas/PublicFulfillmentType' }
+        earliestPickupAt: { type: [string, 'null'], format: date-time, description: 'UTC; `null` if no bookable slot.' }
+    PublicBranchList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PublicBranch' }
+    PublicBranchDetail:
+      type: object
+      description: A `PublicBranch` plus its hours.
+      required: [branchId, branchCode, name, address, location, phone, timezone, openNow, todayHours, fulfillmentTypes,
+        earliestPickupAt, weeklyHours, overrides]
+      properties:
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        name: { type: string }
+        address: { $ref: '#/components/schemas/PublicAddress' }
+        location:
+          oneOf:
+            - $ref: '#/components/schemas/PublicGeoPoint'
+            - type: 'null'
+        phone: { type: [string, 'null'] }
+        timezone: { type: string }
+        openNow: { type: boolean }
+        todayHours:
+          type: array
+          items: { $ref: '#/components/schemas/OpeningRange' }
+        fulfillmentTypes:
+          type: array
+          items: { $ref: '#/components/schemas/PublicFulfillmentType' }
+        earliestPickupAt: { type: [string, 'null'], format: date-time }
+        weeklyHours:
+          type: array
+          description: Sorted by day, then opening time.
+          items: { $ref: '#/components/schemas/WeeklyOpening' }
+        overrides:
+          type: array
+          description: Today … today + 6, by date; no internal reason (Decision U3).
+          items: { $ref: '#/components/schemas/PublicHourOverride' }
     SlotStatus:
       type: string
       enum: [AVAILABLE, NEARLY_FULL, FULL, CUTOFF_PASSED, CLOSED]
