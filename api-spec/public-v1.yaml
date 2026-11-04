@@ -39,7 +39,8 @@ paths:
         - name: days
           in: query
           required: false
-          schema: { type: integer, format: int32, default: 7 }
+          description: Defaults to `min(7, maxAdvanceDays)`; bounded by the horizon (Decision T1).
+          schema: { type: integer, format: int32 }
         - name: orderType
           in: query
           required: false

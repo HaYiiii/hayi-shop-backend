@@ -74,9 +74,15 @@ class SlotResolver implements PickupSlots {
 		FulfillmentSettings settings = config.map(BranchFulfillmentConfig::settings)
 			.orElse(FulfillmentSettings.DEFAULTS);
 		LocalDate from = (query.fromDate() != null) ? query.fromDate() : today;
-		LocalDate to = from.plusDays(query.days() - 1L);
-		checkHorizon(from, query.days(), to, today, settings.maxAdvanceDays());
+		int dayCount = (query.days() != null) ? query.days()
+				: Math.min(SlotQuery.DEFAULT_DAYS, settings.maxAdvanceDays());
 		List<SlotDay> days = new ArrayList<>();
+		if (query.days() == null && dayCount == 0 && !from.isBefore(today)) {
+			// No bookable day at all (maxAdvanceDays = 0) and none asked for explicitly (Decision T1).
+			return new SlotCalendar(query.branchId(), days);
+		}
+		LocalDate to = from.plusDays(dayCount - 1L);
+		checkHorizon(from, dayCount, to, today, settings.maxAdvanceDays());
 		if (config.isEmpty() || !settings.enabled()) {
 			from.datesUntil(to.plusDays(1)).forEach(date -> days.add(new SlotDay(date, false, List.of())));
 			return new SlotCalendar(query.branchId(), days);

@@ -5,8 +5,8 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * PICKUP slots of a Branch: {@code fromDate} defaults to today and {@code days} to 7 (API 02 §3); {@code itemCount},
- * when given, is checked against each slot's item capacity (Decision T5).
+ * PICKUP slots of a Branch: {@code fromDate} defaults to today and {@code days} to {@code min(7, maxAdvanceDays)}
+ * (API 02 §3, Decision T1); {@code itemCount}, when given, is checked against each slot's item capacity (T5).
  */
 public record SlotQuery(UUID branchId, LocalDate fromDate, Integer days, OrderType orderType, Integer itemCount) {
 
@@ -15,7 +15,6 @@ public record SlotQuery(UUID branchId, LocalDate fromDate, Integer days, OrderTy
 	public SlotQuery {
 		Objects.requireNonNull(branchId, "branchId");
 		orderType = (orderType != null) ? orderType : OrderType.INDIVIDUAL;
-		days = (days != null) ? days : DEFAULT_DAYS;
 	}
 
 }

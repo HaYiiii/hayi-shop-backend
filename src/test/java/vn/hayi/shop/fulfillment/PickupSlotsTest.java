@@ -246,6 +246,22 @@ class PickupSlotsTest {
 	}
 
 	@Test
+	void defaultDaysStayInsideAShortHorizon() {
+		configure(new FulfillmentRules(true, false, 3, 30, 180, 30, null, null, 10, 20, null));
+
+		assertThat(this.slots.resolve(new SlotQuery(this.branchId, null, null, null, null)).days()).hasSize(3);
+		assertCode(() -> this.slots.resolve(new SlotQuery(this.branchId, null, 4, null, null)), "VALIDATION_FAILED");
+	}
+
+	@Test
+	void noBookableDayGivesNoDays() {
+		configure(new FulfillmentRules(true, false, 0, 30, 180, 30, null, null, 10, 20, null));
+
+		assertThat(this.slots.resolve(new SlotQuery(this.branchId, null, null, null, null)).days()).isEmpty();
+		assertCode(() -> this.slots.resolve(new SlotQuery(this.branchId, null, 1, null, null)), "VALIDATION_FAILED");
+	}
+
+	@Test
 	void inactiveOrUnknownBranchIsNotFound() {
 		this.branches.deactivate(this.branchId, null, OWNER, null, null);
 
