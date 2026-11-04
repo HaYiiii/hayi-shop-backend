@@ -18,6 +18,8 @@ public interface BranchRepository extends Repository<Branch, UUID> {
 
 	List<Branch> findAllByOrderByBranchCode();
 
+	List<Branch> findByStatusOrderByBranchCode(BranchStatus status);
+
 	List<Branch> findByIdInOrderByBranchCode(Collection<UUID> ids);
 
 }
