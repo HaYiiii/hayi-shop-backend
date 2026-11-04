@@ -9,6 +9,8 @@ import java.util.UUID;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.EvaluationResult;
+import jakarta.persistence.OneToMany;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.Repository;
@@ -40,6 +42,22 @@ class BranchScopeRulesTest {
 		assertThat(evaluate(GlobalRepository.class).hasViolation()).isFalse();
 	}
 
+	@Test
+	void repositoryForAChildOfABranchOwnedRootFailsTheRule() {
+		EvaluationResult result = BranchScopeRules.childrenOfBranchOwnedRootsHaveNoRepository
+			.evaluate(new ClassFileImporter().importClasses(Root.class, Child.class, ChildRepository.class));
+
+		assertThat(result.getFailureReport().getDetails()).singleElement().asString()
+			.contains("ChildRepository", "Child", "Root");
+	}
+
+	@Test
+	void childWithoutRepositoryAndOtherRepositoriesPass() {
+		assertThat(BranchScopeRules.childrenOfBranchOwnedRootsHaveNoRepository
+			.evaluate(new ClassFileImporter().importClasses(Root.class, Child.class, GlobalRepository.class))
+			.hasViolation()).isFalse();
+	}
+
 	private static EvaluationResult evaluate(Class<?> repository) {
 		JavaClasses classes = new ClassFileImporter().importClasses(repository);
 		return BranchScopeRules.branchOwnedRepositoriesHaveNoBareIdLookups.evaluate(classes);
@@ -55,6 +73,28 @@ class BranchScopeRulesTest {
 	}
 
 	static class Global {
+
+	}
+
+	static class Root implements BranchOwned {
+
+		@OneToMany
+		List<Child> children;
+
+		@Override
+		public UUID getBranchId() {
+			return null;
+		}
+
+	}
+
+	static class Child {
+
+	}
+
+	interface ChildRepository extends Repository<Child, UUID> {
+
+		Optional<Child> findByIdAndName(UUID id, String name);
 
 	}
 

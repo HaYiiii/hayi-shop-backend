@@ -2,12 +2,18 @@ package vn.hayi.shop;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import jakarta.persistence.OneToMany;
 
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.lang.ArchCondition;
@@ -52,7 +58,52 @@ public final class BranchScopeRules {
 		})
 		.allowEmptyShould(true);
 
+	/**
+	 * A child of a {@code BranchOwned} root (an element of one of its {@code @OneToMany} collections) has no repository
+	 * at all: it is only reached through the root loaded by {@code branchId} (Decision S7).
+	 */
+	public static final ArchRule childrenOfBranchOwnedRootsHaveNoRepository = classes()
+		.should(new ArchCondition<>("not be a repository of a child of a BranchOwned root") {
+
+			private final Map<Class<?>, Class<?>> rootOfChild = new HashMap<>();
+
+			@Override
+			public void init(Collection<JavaClass> all) {
+				for (JavaClass candidate : all) {
+					Class<?> type = candidate.reflect();
+					if (!type.isInterface() && BranchOwned.class.isAssignableFrom(type)) {
+						for (Field field : type.getDeclaredFields()) {
+							if (field.isAnnotationPresent(OneToMany.class)) {
+								elementType(field).ifPresent(child -> this.rootOfChild.put(child, type));
+							}
+						}
+					}
+				}
+			}
+
+			@Override
+			public void check(JavaClass candidate, ConditionEvents events) {
+				Class<?> type = candidate.reflect();
+				if (!type.isInterface() || !Repository.class.isAssignableFrom(type)) {
+					return;
+				}
+				aggregateOf(type).filter(this.rootOfChild::containsKey)
+					.ifPresent(child -> events.add(SimpleConditionEvent.violated(candidate, candidate.getName()
+							+ " is a repository of " + child.getSimpleName() + ", a child of the BranchOwned "
+							+ this.rootOfChild.get(child).getSimpleName() + " (reach it through the root)")));
+			}
+
+		})
+		.allowEmptyShould(true);
+
 	private BranchScopeRules() {
+	}
+
+	/** {@code E} of a {@code Collection<E>} field. */
+	private static Optional<Class<?>> elementType(Field field) {
+		return (field.getGenericType() instanceof ParameterizedType collection
+				&& collection.getActualTypeArguments()[0] instanceof Class<?> element) ? Optional.of(element)
+						: Optional.empty();
 	}
 
 	/** The {@code T} of {@code Repository<T, ID>}, searched through the interface hierarchy. */

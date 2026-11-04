@@ -55,6 +55,9 @@ class ArchitectureTest {
 	static final ArchRule branchOwnedRepositoriesHaveNoBareIdLookups = BranchScopeRules.branchOwnedRepositoriesHaveNoBareIdLookups;
 
 	@ArchTest
+	static final ArchRule childrenOfBranchOwnedRootsHaveNoRepository = BranchScopeRules.childrenOfBranchOwnedRootsHaveNoRepository;
+
+	@ArchTest
 	static final ArchRule applicationDoesNotDependOnWeb = noClasses()
 		.that().resideInAPackage("..application..")
 		.should().dependOnClassesThat().resideInAPackage("..web..")
