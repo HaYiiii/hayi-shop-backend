@@ -59,7 +59,7 @@ class FulfillmentConfigFirstSaveRaceTest {
 			.toUpperCase(), "HaYi test", "1 Lê Lợi", null, null, "TP.HCM", null, null, null, null), OWNER, null, null)
 			.branchId();
 		this.service.replace(branchId, "PICKUP", RULES, new ExpectedVersion(0), OWNER, null, null);
-		FulfillmentConfigService late = new FulfillmentConfigService(staleReads(this.configs), this.directory,
+		FulfillmentConfigService late = new FulfillmentConfigService(new FulfillmentConfigStore(staleReads(this.configs)), this.directory,
 				this.audit, Clock.systemUTC());
 
 		assertThatThrownBy(() -> late.replace(branchId, "PICKUP",

@@ -1,6 +1,7 @@
 package vn.hayi.shop.branch.application;
 
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -115,6 +116,17 @@ public class BranchHoursService implements BranchOpeningHours {
 	public List<OpeningInterval> on(UUID branchId, LocalDate date) {
 		return this.branches.findById(branchId)
 			.map(branch -> branch.openingHoursOn(date).stream().map(BranchHoursService::interval).toList())
+			.orElse(List.of());
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<OpeningInterval> weekly(UUID branchId, DayOfWeek day) {
+		return this.branches.findById(branchId)
+			.map(branch -> branch.getWeeklyHours().stream()
+				.filter(hours -> hours.dayOfWeek() == day.getValue())
+				.map(hours -> interval(hours.range()))
+				.toList())
 			.orElse(List.of());
 	}
 

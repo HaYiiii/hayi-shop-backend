@@ -1,5 +1,6 @@
 package vn.hayi.shop.branch.api;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -16,5 +17,11 @@ public interface BranchOpeningHours {
 	 * Branch.
 	 */
 	List<OpeningInterval> on(UUID branchId, LocalDate date);
+
+	/**
+	 * The weekly schedule of {@code day}, ignoring date overrides, sorted by opening time; for checking other weekly
+	 * schedules against it (Decision S5). Empty means closed that day, also for an unknown Branch.
+	 */
+	List<OpeningInterval> weekly(UUID branchId, DayOfWeek day);
 
 }

@@ -50,6 +50,13 @@ class ArchitectureTest {
 	@ArchTest
 	static final ArchRule backofficeEndpointsDeclarePermission = AuthorizationRules.backofficeEndpointsDeclarePermission;
 
+	/** Entities of one Branch are only found by {@code (branchId, …)} (API README §3.1, Decision S7). */
+	@ArchTest
+	static final ArchRule branchOwnedRepositoriesHaveNoBareIdLookups = BranchScopeRules.branchOwnedRepositoriesHaveNoBareIdLookups;
+
+	@ArchTest
+	static final ArchRule childrenOfBranchOwnedRootsHaveNoRepository = BranchScopeRules.childrenOfBranchOwnedRootsHaveNoRepository;
+
 	@ArchTest
 	static final ArchRule applicationDoesNotDependOnWeb = noClasses()
 		.that().resideInAPackage("..application..")

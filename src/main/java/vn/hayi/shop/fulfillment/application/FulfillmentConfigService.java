@@ -6,8 +6,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.core.NestedExceptionUtils;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,16 +14,10 @@ import vn.hayi.shop.audit.api.AuditRecorder;
 import vn.hayi.shop.audit.api.AuditSource;
 import vn.hayi.shop.branch.api.BranchDirectory;
 import vn.hayi.shop.fulfillment.domain.BranchFulfillmentConfig;
-import vn.hayi.shop.fulfillment.domain.BranchFulfillmentConfigRepository;
-import vn.hayi.shop.fulfillment.domain.FulfillmentErrorCode;
 import vn.hayi.shop.fulfillment.domain.FulfillmentSettings;
 import vn.hayi.shop.fulfillment.domain.FulfillmentType;
 import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
-import vn.hayi.shop.shared.error.CommonErrorCode;
-import vn.hayi.shop.shared.error.DomainException;
-import vn.hayi.shop.shared.error.RuleViolationsException;
-import vn.hayi.shop.shared.error.RuleViolationsException.Violation;
 
 /**
  * Reads and replaces a Branch's fulfillment configs (API 09 §2, Decision R). The Branch is checked through
@@ -34,9 +26,7 @@ import vn.hayi.shop.shared.error.RuleViolationsException.Violation;
 @Service
 public class FulfillmentConfigService {
 
-	private static final String UNIQUE_KEY = "uk_ful_branch_fulfillment_config__branch_type";
-
-	private final BranchFulfillmentConfigRepository configs;
+	private final FulfillmentConfigStore configs;
 
 	private final BranchDirectory branches;
 
@@ -44,7 +34,7 @@ public class FulfillmentConfigService {
 
 	private final Clock clock;
 
-	FulfillmentConfigService(BranchFulfillmentConfigRepository configs, BranchDirectory branches, AuditRecorder audit,
+	FulfillmentConfigService(FulfillmentConfigStore configs, BranchDirectory branches, AuditRecorder audit,
 			Clock clock) {
 		this.configs = configs;
 		this.branches = branches;
@@ -57,7 +47,7 @@ public class FulfillmentConfigService {
 	public List<FulfillmentConfigView> list(UUID branchId) {
 		this.branches.requireExists(branchId);
 		return List.of(view(FulfillmentType.PICKUP, this.configs
-			.findByBranchIdAndFulfillmentType(branchId, FulfillmentType.PICKUP)
+			.find(branchId, FulfillmentType.PICKUP)
 			.orElse(null)));
 	}
 
@@ -73,10 +63,10 @@ public class FulfillmentConfigService {
 				rules.groupOrderMinLeadMinutes(), rules.customerCancelCutoffMinutes(), rules.defaultSlotMaxOrders(),
 				rules.defaultSlotMaxItems(), rules.pickupInstructions());
 		this.branches.requireExists(branchId);
-		FulfillmentType type = supportedType(fulfillmentType);
+		FulfillmentType type = FulfillmentConfigStore.supportedType(fulfillmentType);
 		this.branches.requireConfigurable(branchId);
 		settings.validated();
-		Optional<BranchFulfillmentConfig> existing = this.configs.findByBranchIdAndFulfillmentType(branchId, type);
+		Optional<BranchFulfillmentConfig> existing = this.configs.find(branchId, type);
 		expected.verify(existing.map(BranchFulfillmentConfig::getVersion).orElse(0L));
 		FulfillmentSettings previous = existing.map(BranchFulfillmentConfig::settings)
 			.orElse(FulfillmentSettings.DEFAULTS);
@@ -93,7 +83,7 @@ public class FulfillmentConfigService {
 				return view(type, config);
 			}
 		}
-		save(config);
+		this.configs.save(config);
 		List<Map<String, Object>> diff = settings.diffFrom(previous);
 		this.audit.record(AuditEntry.of(actor, AuditSource.BACKOFFICE_WEB, "FULFILLMENT_CONFIG_UPDATE",
 				"FULFILLMENT_CONFIG", config.getId())
@@ -102,28 +92,6 @@ public class FulfillmentConfigService {
 			.withNewValue(diff.get(1))
 			.withClient(ipAddress, userAgent));
 		return view(type, config);
-	}
-
-	private void save(BranchFulfillmentConfig config) {
-		try {
-			this.configs.saveAndFlush(config);
-		}
-		catch (DataIntegrityViolationException ex) {
-			String message = NestedExceptionUtils.getMostSpecificCause(ex).getMessage();
-			if (message != null && message.contains(UNIQUE_KEY)) {
-				throw new DomainException(CommonErrorCode.VERSION_CONFLICT,
-						"Concurrent first save of " + config.getFulfillmentType() + " at " + config.getBranchId());
-			}
-			throw ex;
-		}
-	}
-
-	/** Exact {@code PICKUP} only in the MVP; anything else is a rule violation, not a malformed request (R3). */
-	private static FulfillmentType supportedType(String value) {
-		return FulfillmentType.parse(value)
-			.filter(FulfillmentType::supportedInMvp)
-			.orElseThrow(() -> new RuleViolationsException(FulfillmentErrorCode.FULFILLMENT_CONFIG_INVALID,
-					List.of(new Violation("fulfillmentType", "NOT_SUPPORTED"))));
 	}
 
 	private static FulfillmentConfigView view(FulfillmentType type, BranchFulfillmentConfig config) {
