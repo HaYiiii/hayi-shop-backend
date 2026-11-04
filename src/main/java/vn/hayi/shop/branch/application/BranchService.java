@@ -196,6 +196,14 @@ public class BranchService implements BranchDirectory {
 		find(branchId).requireNotClosed();
 	}
 
+	@Override
+	@Transactional(readOnly = true)
+	public void requireActive(UUID branchId) {
+		if (find(branchId).getStatus() != BranchStatus.ACTIVE) {
+			throw new DomainException(BranchErrorCode.BRANCH_NOT_FOUND, "Branch " + branchId + " is not ACTIVE");
+		}
+	}
+
 	@Transactional(readOnly = true)
 	public BranchView get(UUID branchId) {
 		return BranchView.of(find(branchId));

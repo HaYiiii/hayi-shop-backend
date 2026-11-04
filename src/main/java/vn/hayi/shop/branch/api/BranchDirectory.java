@@ -18,4 +18,11 @@ public interface BranchDirectory {
 	 */
 	void requireConfigurable(UUID branchId);
 
+	/**
+	 * The Branch exists and is {@code ACTIVE}, for what customers see (Decision T2). Any other status gets the same
+	 * answer as an unknown Branch, so a draft or closed Branch is not revealed.
+	 * @throws vn.hayi.shop.shared.error.DomainException {@code BRANCH_NOT_FOUND}
+	 */
+	void requireActive(UUID branchId);
+
 }
