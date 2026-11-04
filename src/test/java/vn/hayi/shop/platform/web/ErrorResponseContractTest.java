@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 
@@ -33,13 +34,16 @@ import org.springframework.http.MediaType;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.stereotype.Service;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import tools.jackson.databind.JsonNode;
@@ -56,7 +60,8 @@ import vn.hayi.shop.shared.error.ErrorKind;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension.class)
-@Import({ TestcontainersConfiguration.class, ErrorResponseContractTest.ProbeController.class })
+@Import({ TestcontainersConfiguration.class, ErrorResponseContractTest.ProbeController.class,
+		ErrorResponseContractTest.ValidatedProbeController.class, ErrorResponseContractTest.ValidatedProbeService.class })
 class ErrorResponseContractTest {
 
 	private static final String PROBE = "/api/backoffice/v1/__probe";
@@ -159,6 +164,26 @@ class ErrorResponseContractTest {
 			.andExpect(jsonPath("$.code").value("PROBE_INVALID_TRANSITION"))
 			.andExpect(jsonPath("$.conflicts[0].type").value("PROBE"))
 			.andExpect(jsonPath("$.conflicts[0].count").value(2));
+	}
+
+	@Test
+	@WithMockUser
+	void constrainedParameterOfAValidatedControllerGets400WithItsName() throws Exception {
+		mvc.perform(get(PROBE + "/validated-params").param("count", "0"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+			.andExpect(jsonPath("$.errors[0].field").value("count"))
+			.andExpect(jsonPath("$.errors[0].code").value("MIN"));
+	}
+
+	/** A service refusing what the server itself passed is a server bug, not a bad request. */
+	@Test
+	@WithMockUser
+	void constraintViolationBeyondTheWebLayerGets500(CapturedOutput output) throws Exception {
+		mvc.perform(get(PROBE + "/validated-params/service"))
+			.andExpect(status().isInternalServerError())
+			.andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
+		assertThat(output.getOut()).contains("ConstraintViolationException");
 	}
 
 	@Test
@@ -306,6 +331,38 @@ class ErrorResponseContractTest {
 
 		@PostMapping("/validated")
 		void validated(@Valid @RequestBody ProbeRequest request) {
+		}
+
+	}
+
+	/** Like the generated interfaces: {@code @Validated}, so parameter constraints throw ConstraintViolationException. */
+	@RestController
+	@Validated
+	@RequestMapping(PROBE + "/validated-params")
+	static class ValidatedProbeController {
+
+		private final ValidatedProbeService service;
+
+		ValidatedProbeController(ValidatedProbeService service) {
+			this.service = service;
+		}
+
+		@GetMapping
+		void validatedParams(@RequestParam("count") @Min(1) int count) {
+		}
+
+		@GetMapping("/service")
+		void serviceRefuses() {
+			this.service.needsPositive(0);
+		}
+
+	}
+
+	@Service
+	@Validated
+	static class ValidatedProbeService {
+
+		void needsPositive(@Positive int value) {
 		}
 
 	}
