@@ -28,6 +28,12 @@ public final class MutableClock extends Clock {
 		this.frozenAt = Instant.now();
 	}
 
+	/** Stops the clock at {@code instant}, for rules that depend on the time of day (cutoff, lead). */
+	public void freezeAt(Instant instant) {
+		this.offset = Duration.ZERO;
+		this.frozenAt = instant;
+	}
+
 	public void reset() {
 		this.offset = Duration.ZERO;
 		this.frozenAt = null;

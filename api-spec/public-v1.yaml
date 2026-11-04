@@ -7,4 +7,101 @@ info:
     HaYi-Shop-Canonical-VI/docs/architecture/api/*.md before implementation.
 servers:
   - url: /api/public/v1
-paths: {}
+tags:
+  - name: FulfillmentAvailability
+    description: Pickup slots a customer may choose (API 02 §3, Decision N, T)
+paths:
+  /branches/{branchId}/fulfillment/slots:
+    get:
+      tags: [FulfillmentAvailability]
+      operationId: listPickupSlots
+      security: []
+      summary: Pickup slots of an ACTIVE Branch for the coming days
+      description: |
+        No sign-in. Slots are generated from the pickup windows and cut to the Branch's opening hours (Decision N4);
+        each has a status but never a capacity number (T5). Unknown or not `ACTIVE` Branch → `404 BRANCH_NOT_FOUND`;
+        `fromDate` in the past, `days < 1` or beyond `maxAdvanceDays` (today included) → `400` (T1). The answer is a
+        hint only: capacity is claimed when the order is created. `Cache-Control: no-store`.
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: fulfillmentType
+          in: query
+          required: false
+          schema: { type: string, enum: [PICKUP], default: PICKUP }
+        - name: fromDate
+          in: query
+          required: false
+          description: Defaults to today (`Asia/Ho_Chi_Minh`).
+          schema: { type: string, format: date }
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, format: int32, default: 7 }
+        - name: orderType
+          in: query
+          required: false
+          description: '`GROUP` uses the Group Order lead time (Decision N2).'
+          schema: { type: string, enum: [INDIVIDUAL, GROUP], default: INDIVIDUAL }
+        - name: itemCount
+          in: query
+          required: false
+          description: Items the customer intends to order, checked against `maxItems` (T5).
+          schema: { type: integer, format: int32, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: The days asked for, each with its slots.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupSlots' }
+        '400':
+          description: '`VALIDATION_FAILED`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: '`BRANCH_NOT_FOUND`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+components:
+  schemas:
+    Problem:
+      $ref: './components/common.yaml#/components/schemas/Problem'
+    SlotStatus:
+      type: string
+      enum: [AVAILABLE, NEARLY_FULL, FULL, CUTOFF_PASSED, CLOSED]
+      description: '`CLOSED` is reserved; the MVP does not emit it (Decision T4).'
+    Slot:
+      type: object
+      required: [slotStart, slotEnd, status]
+      properties:
+        slotStart: { type: string, description: '`HH:mm`, Branch local time.' }
+        slotEnd: { type: string, description: '`HH:mm`, Branch local time.' }
+        status: { $ref: '#/components/schemas/SlotStatus' }
+    SlotDay:
+      type: object
+      required: [date, isOpen, slots]
+      properties:
+        date: { type: string, format: date }
+        isOpen: { type: boolean, description: '`false` → no slots that day (Decision T3).' }
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/Slot' }
+    PickupSlots:
+      type: object
+      required: [branchId, fulfillmentType, timezone, asapAvailable, days]
+      properties:
+        branchId: { type: string, format: uuid }
+        fulfillmentType: { type: string, enum: [PICKUP] }
+        timezone: { type: string, description: 'Always `Asia/Ho_Chi_Minh`.' }
+        asapAvailable: { type: boolean, description: 'Always `false` in the MVP.' }
+        days:
+          type: array
+          items: { $ref: '#/components/schemas/SlotDay' }
