@@ -1,6 +1,12 @@
 package vn.hayi.shop.platform.web;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +72,29 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 		ProblemDetail problem = this.problems.create(CommonErrorCode.VALIDATION_FAILED, request);
 		problem.setProperty("errors", this.problems.fieldViolations(ex.violations(), request));
 		return ResponseEntity.badRequest().body(problem);
+	}
+
+	/**
+	 * A constrained parameter (query, header, path) of a generated interface failed method validation → {@code 400
+	 * VALIDATION_FAILED} with one {@code errors[]} entry per parameter, like body validation (API README §6).
+	 */
+	@ExceptionHandler(ConstraintViolationException.class)
+	ResponseEntity<ProblemDetail> handleConstraintViolation(ConstraintViolationException ex,
+			HttpServletRequest request) {
+		List<InvalidFieldsException.Violation> violations = ex.getConstraintViolations().stream()
+			.map(violation -> new InvalidFieldsException.Violation(parameterName(violation),
+					violation.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName()
+						.replaceAll("([a-z0-9])([A-Z])", "$1_$2")
+						.toUpperCase(Locale.ROOT)))
+			.sorted(Comparator.comparing(InvalidFieldsException.Violation::field))
+			.toList();
+		return handleInvalidFields(new InvalidFieldsException(violations), request);
+	}
+
+	/** {@code listPickupSlots.itemCount} → {@code itemCount}. */
+	private static String parameterName(ConstraintViolation<?> violation) {
+		String path = violation.getPropertyPath().toString();
+		return path.substring(path.lastIndexOf('.') + 1);
 	}
 
 	/**

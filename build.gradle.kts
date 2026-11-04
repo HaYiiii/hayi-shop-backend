@@ -71,8 +71,10 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 		generatorName = "spring"
 		inputSpec = layout.projectDirectory.file("api-spec/$surface-v1.yaml")
 		outputDir = openApiOutput.map { it.dir(surface) }
-		apiPackage = "vn.hayi.shop.platform.web.spec.$surface.api"
-		modelPackage = "vn.hayi.shop.platform.web.spec.$surface.model"
+		// `public` is a Java keyword, so that surface's package is `publicapi`.
+		val pkg = if (surface == "public") "publicapi" else surface
+		apiPackage = "vn.hayi.shop.platform.web.spec.$pkg.api"
+		modelPackage = "vn.hayi.shop.platform.web.spec.$pkg.model"
 		modelNameSuffix = "Dto"
 		cleanupOutput = true
 		configOptions = mapOf(
