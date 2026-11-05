@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -43,6 +45,8 @@ public class ProductService {
 			"uk_cat_product_variant__sku", CatalogErrorCode.CATALOG_SKU_TAKEN);
 
 	private static final Sort BY_NAME = Sort.by("name", "id");
+
+	private static final Pattern DUPLICATE_ENTRY = Pattern.compile("Duplicate entry '([^']*)'");
 
 	private final ProductRepository products;
 
@@ -87,9 +91,10 @@ public class ProductService {
 		if (this.products.existsBySlug(product.getSlug())) {
 			throw taken(CatalogErrorCode.CATALOG_SLUG_TAKEN, product.getSlug());
 		}
-		List<String> skus = product.getVariants().stream().map(ProductVariant::getSku).toList();
-		if (this.products.existsVariantWithSku(skus)) {
-			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, String.join(", ", skus));
+		List<String> takenSkus = this.products
+			.findTakenSkus(product.getVariants().stream().map(ProductVariant::getSku).toList());
+		if (!takenSkus.isEmpty()) {
+			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, String.join(", ", takenSkus));
 		}
 		save(product);
 		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, "PRODUCT_CREATE", "PRODUCT",
@@ -142,12 +147,18 @@ public class ProductService {
 			if (message != null) {
 				for (Map.Entry<String, CatalogErrorCode> key : UNIQUE_KEYS.entrySet()) {
 					if (message.contains(key.getKey())) {
-						throw taken(key.getValue(), product.getProductCode());
+						throw taken(key.getValue(), duplicateValue(message));
 					}
 				}
 			}
 			throw ex;
 		}
+	}
+
+	/** MySQL names the value: {@code Duplicate entry 'ML-M' for key 'cat_product_variant.uk_…'}. */
+	private static String duplicateValue(String message) {
+		Matcher matcher = DUPLICATE_ENTRY.matcher(message);
+		return matcher.find() ? matcher.group(1) : "";
 	}
 
 	private static Map<String, Object> snapshot(Product product) {

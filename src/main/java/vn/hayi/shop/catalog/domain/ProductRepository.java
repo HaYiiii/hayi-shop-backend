@@ -1,6 +1,7 @@
 package vn.hayi.shop.catalog.domain;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,8 +21,9 @@ public interface ProductRepository extends Repository<Product, UUID> {
 
 	boolean existsBySlug(String slug);
 
-	@Query("select count(v) > 0 from ProductVariant v where v.sku in :skus")
-	boolean existsVariantWithSku(Collection<String> skus);
+	/** Which of {@code skus} a Variant (archived included) already uses. */
+	@Query("select v.sku from ProductVariant v where v.sku in :skus order by v.sku")
+	List<String> findTakenSkus(Collection<String> skus);
 
 	boolean existsByPrimaryCategoryIdAndStatusNot(UUID primaryCategoryId, ProductStatus status);
 

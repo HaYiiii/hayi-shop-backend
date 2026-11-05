@@ -211,11 +211,57 @@ class BackofficeProductTest {
 			.containsEntry("actor_user_id", UuidBinary.toBytes(this.adminId));
 		String newValue = (String) audits.getFirst().get("new_value");
 		assertThat(JsonPath.<String>read(newValue, "$.productCode")).isEqualTo(code);
+		assertThat(JsonPath.<String>read(newValue, "$.name")).isEqualTo("Món " + code);
+		assertThat(JsonPath.<String>read(newValue, "$.slug")).startsWith("audit-");
+		assertThat(JsonPath.<String>read(newValue, "$.productType")).isEqualTo("STANDARD");
+		assertThat(JsonPath.<Object>read(newValue, "$.primaryCategoryId")).isNull();
+		assertThat(JsonPath.<List<String>>read(newValue, "$.variants[*].sku")).containsExactly(code);
 		assertThat(JsonPath.<List<Integer>>read(newValue, "$.variants[*].basePrice")).containsExactly(25000);
+		assertThat(JsonPath.<List<Boolean>>read(newValue, "$.variants[*].isDefault")).containsExactly(true);
 	}
 
 	@Test
-	void creatingNeedsCatalogManageAndPriceManage() throws Exception {
+	void aChildCategoryCanBeThePrimary() throws Exception {
+		String root = category();
+		MockHttpServletResponse child = this.auth.perform(post(CATEGORIES).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"slug\": \"" + slug("con") + "\", \"name\": \"Con\", \"parentId\": \"" + root + "\"}"),
+				this.admin, true);
+		assertThat(child.getStatus()).as(child.getContentAsString()).isEqualTo(201);
+		String childId = JsonPath.read(child.getContentAsString(), "$.categoryId");
+
+		MockHttpServletResponse created = create(withCategory(childId));
+
+		assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(201);
+		assertThat(JsonPath.<String>read(created.getContentAsString(), "$.primaryCategoryId")).isEqualTo(childId);
+	}
+
+	@Test
+	void theTakenSkuIsNamed() throws Exception {
+		String taken = code("ten");
+		assertThat(create(simple(code("ten"), slug("ten"), 1, taken)).getStatus()).isEqualTo(201);
+		String fresh = code("moi");
+
+		MockHttpServletResponse response = create("""
+				{"productCode": "%s", "name": "Hai", "slug": "%s",
+				 "variants": [{"sku": "%s", "name": "M", "basePrice": 1, "isDefault": true},
+				              {"sku": "%s", "name": "L", "basePrice": 2, "isDefault": false}]}
+				""".formatted(code("hai"), slug("hai"), fresh, taken));
+
+		assertProblem(response, 409, "CATALOG_SKU_TAKEN");
+		assertThat(JsonPath.<String>read(response.getContentAsString(), "$.detail")).contains(taken)
+			.doesNotContain(fresh);
+	}
+
+	@Test
+	void creatingWithoutCatalogPriceManageIsDenied() throws Exception {
+		Session noPrice = this.fixtures.openSession(catalogManagerWithoutPricePermission());
+
+		assertProblem(this.auth.perform(post(PRODUCTS).contentType(MediaType.APPLICATION_JSON)
+			.content(simple(code("no"), slug("no"), 1)), noPrice, true), 403, "PERMISSION_DENIED");
+	}
+
+	@Test
+	void creatingWithoutCatalogManageIsDeniedButCatalogViewCanRead() throws Exception {
 		UUID managerId = this.fixtures.branchStaff();
 		this.fixtures.assignToBranch(managerId, anyBranch(), "MANAGER");
 		Session manager = this.fixtures.openSession(managerId);
@@ -225,7 +271,7 @@ class BackofficeProductTest {
 		assertThat(this.auth.perform(get(PRODUCTS), manager, false).getStatus()).as("CATALOG_VIEW").isEqualTo(200);
 	}
 
-	// --- read ---------------------------------------------------------------------------------------------------
+		// --- read ---------------------------------------------------------------------------------------------------
 
 	@Test
 	void detailReturnsTheProductWithItsVariantsAndETag() throws Exception {
@@ -320,6 +366,29 @@ class BackofficeProductTest {
 			.content("{\"slug\": \"" + slug("danh-muc") + "\", \"name\": \"Danh mục\"}"), this.admin, true);
 		assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(201);
 		return JsonPath.read(created.getContentAsString(), "$.categoryId");
+	}
+
+	/**
+	 * No seed role has CATALOG_MANAGE without CATALOG_PRICE_MANAGE (API 01-security §7.1), so this test-only STORE
+	 * role isolates Decision Z4: an Admin's ADMIN role is swapped for it.
+	 */
+	private UUID catalogManagerWithoutPricePermission() {
+		this.jdbc.sql("""
+				INSERT IGNORE INTO iam_role (id, code, name, allowed_scope, is_system, requires_mfa, created_at, updated_at)
+				VALUES (?, 'TEST_CATALOG_NO_PRICE', 'Test: catalog without prices', 'STORE', 0, 1, NOW(6), NOW(6))
+				""").param(UuidBinary.toBytes(UUID.randomUUID())).update();
+		this.jdbc.sql("""
+				INSERT IGNORE INTO iam_role_permission (role_id, permission_id)
+				SELECT r.id, p.id FROM iam_role r JOIN iam_permission p ON p.code IN ('CATALOG_VIEW', 'CATALOG_MANAGE')
+				WHERE r.code = 'TEST_CATALOG_NO_PRICE'
+				""").update();
+		UUID userId = this.fixtures.storeAdmin(IdentityFixtures.uniqueEmail());
+		this.jdbc.sql("DELETE FROM iam_user_store_role WHERE user_id = ?").param(UuidBinary.toBytes(userId)).update();
+		this.jdbc.sql("""
+				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
+				SELECT ?, ?, id, NOW(6) FROM iam_role WHERE code = 'TEST_CATALOG_NO_PRICE'
+				""").param(UuidBinary.toBytes(UUID.randomUUID())).param(UuidBinary.toBytes(userId)).update();
+		return userId;
 	}
 
 	private UUID anyBranch() throws Exception {

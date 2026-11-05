@@ -1,5 +1,7 @@
 package vn.hayi.shop;
 
+import java.util.Arrays;
+
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 
 import com.tngtech.archunit.core.domain.JavaMethod;
@@ -25,11 +27,25 @@ public final class AuthorizationRules {
 		.should(new ArchCondition<>("be annotated with @RequiresStepUp when the permission is marked S") {
 			@Override
 			public void check(JavaMethod method, ConditionEvents events) {
-				boolean sensitive = java.util.Arrays.stream(method.getAnnotationOfType(RequiresPermission.class).value())
+				boolean sensitive = Arrays.stream(method.getAnnotationOfType(RequiresPermission.class).value())
 					.anyMatch(Permission::requiresStepUp);
 				if (sensitive && !method.isAnnotatedWith(RequiresStepUp.class)) {
 					events.add(SimpleConditionEvent.violated(method,
 							method.getFullName() + " requires a permission marked S but lacks @RequiresStepUp"));
+				}
+			}
+		})
+		.allowEmptyShould(true);
+
+	/** {@code @RequiresPermission({})} would let any signed-in user through, so at least one permission is named. */
+	public static final ArchRule permissionListIsNotEmpty = methods()
+		.that().areAnnotatedWith(RequiresPermission.class)
+		.should(new ArchCondition<>("name at least one permission in @RequiresPermission") {
+			@Override
+			public void check(JavaMethod method, ConditionEvents events) {
+				if (method.getAnnotationOfType(RequiresPermission.class).value().length == 0) {
+					events.add(SimpleConditionEvent.violated(method,
+							method.getFullName() + " has an empty @RequiresPermission"));
 				}
 			}
 		})
