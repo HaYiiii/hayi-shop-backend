@@ -35,6 +35,8 @@ public interface CategoryRepository extends Repository<Category, UUID> {
 
 	boolean existsByParentIdAndStatusNot(UUID parentId, CategoryStatus status);
 
+	boolean existsByParentId(UUID parentId);
+
 	List<Category> findAllByOrderBySortOrderAscIdAsc();
 
 	List<Category> findByStatusOrderBySortOrderAscIdAsc(CategoryStatus status);

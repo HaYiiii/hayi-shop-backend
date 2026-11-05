@@ -100,7 +100,7 @@ public class Category {
 
 	/**
 	 * Moves this Category under {@code parent} ({@code null} = make it a root), last among its new siblings
-	 * ({@code sortOrder}). A Category with non-archived children cannot become a child (Decision Y3).
+	 * ({@code sortOrder}). A Category with children, archived ones included, cannot become a child (Decision Y3).
 	 */
 	public void moveTo(Category parent, boolean hasActiveChildren, int sortOrder, FieldDiff diff, Instant now) {
 		requireNotArchived();

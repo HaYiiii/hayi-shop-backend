@@ -86,8 +86,8 @@ public class CategoryService {
 		UUID newParentId = changes.parentId().applyTo(category.getParentId());
 		boolean moves = !Objects.equals(newParentId, category.getParentId());
 		Category parent = (moves && newParentId != null) ? lock(newParentId) : null;
-		boolean hasChildren = moves
-				&& this.categories.existsByParentIdAndStatusNot(categoryId, CategoryStatus.ARCHIVED);
+		// Archived children count too: they would end up on a third level (Decision Y3).
+		boolean hasChildren = moves && this.categories.existsByParentId(categoryId);
 		int position = moves ? nextPosition(newParentId) : category.getSortOrder();
 		Instant now = this.clock.instant();
 		FieldDiff diff = category.edit(changes.name().applyTo(category.getName()), newSlug,

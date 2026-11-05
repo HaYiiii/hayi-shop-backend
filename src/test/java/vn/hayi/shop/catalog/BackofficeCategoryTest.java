@@ -328,6 +328,19 @@ class BackofficeCategoryTest {
 	}
 
 	@Test
+	void categoryWithOnlyArchivedChildrenStillCannotBecomeAChild() throws Exception {
+		String parent = createdId(Map.of("slug", slug("con-luu"), "name", "Còn lưu trữ"));
+		String child = createdId(Map.of("slug", slug("con"), "name", "Con", "parentId", parent));
+		archive(child, null);
+		String other = createdId(Map.of("slug", slug("khac"), "name", "Khác"));
+
+		assertProblem(update(parent, "\"v0\"", "{\"parentId\": \"" + other + "\"}"), 422,
+				"CATALOG_CATEGORY_DEPTH_EXCEEDED");
+		Map<String, Object> node = node(tree(true), parent);
+		assertThat(JsonPath.<List<String>>read(node, "$.children[*].categoryId")).containsExactly(child);
+	}
+
+	@Test
 	void archivedCategoryCannotBeEdited() throws Exception {
 		String id = createdId(Map.of("slug", slug("luu-tru"), "name", "Lưu trữ"));
 		archive(id, null);

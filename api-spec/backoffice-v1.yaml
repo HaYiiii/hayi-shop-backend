@@ -910,7 +910,7 @@ paths:
       description: |
         `CATALOG_MANAGE`. JSON Merge Patch on `name`, `slug`, `description` (`null` clears) and `parentId` (`null` =
         make it a root; a new parent puts it last there). Any other key → `400` (Decision Y3). The new parent follows
-        the rules of create; moving a Category that has non-archived children under another, or under itself →
+        the rules of create; moving a Category that has children (archived ones included) under another, or under itself →
         `422 CATALOG_CATEGORY_DEPTH_EXCEEDED`. An archived Category → `409 CATALOG_CATEGORY_ARCHIVED`. Requires
         `If-Match: "v{n}"` (missing → `428`, stale → `412`). Changed fields are audited; a patch that changes nothing
         keeps the version. Requires `X-CSRF-Token`.
