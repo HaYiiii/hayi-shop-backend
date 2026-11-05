@@ -176,6 +176,12 @@ class BackofficeAuthorizationTest {
 	}
 
 	@Test
+	void everyListedPermissionIsNeeded() throws Exception {
+		assertThat(ordersAndListing(staffAt(this.branchA, "MANAGER"), this.branchA).getStatus()).isEqualTo(204);
+		assertProblem(ordersAndListing(staffAt(this.branchA, "BARISTA"), this.branchA), 403, "PERMISSION_DENIED");
+	}
+
+	@Test
 	void malformedBranchIdIsOutOfScope() throws Exception {
 		Session manager = staffAt(this.branchA, "MANAGER");
 
@@ -253,6 +259,10 @@ class BackofficeAuthorizationTest {
 		return this.auth.perform(get(PROBE + "/branches/{branchId}/orders", branchId), session, false);
 	}
 
+	private MockHttpServletResponse ordersAndListing(Session session, UUID branchId) throws Exception {
+		return this.auth.perform(post(PROBE + "/branches/{branchId}/orders-and-listing", branchId), session, true);
+	}
+
 	private MockHttpServletResponse cancelPrivileged(Session session, UUID branchId) throws Exception {
 		return this.auth.perform(post(PROBE + "/branches/{branchId}/orders/cancel-privileged", branchId), session, true);
 	}
@@ -277,6 +287,13 @@ class BackofficeAuthorizationTest {
 		@GetMapping(PROBE + "/branches/{branchId}/orders")
 		@RequiresPermission(Permission.ORDER_VIEW)
 		ResponseEntity<Void> orders(@PathVariable String branchId) {
+			return ResponseEntity.noContent().build();
+		}
+
+		/** Needs both: a BARISTA has {@code ORDER_VIEW} but not {@code BRANCH_LISTING_MANAGE}. */
+		@PostMapping(PROBE + "/branches/{branchId}/orders-and-listing")
+		@RequiresPermission({ Permission.ORDER_VIEW, Permission.BRANCH_LISTING_MANAGE })
+		ResponseEntity<Void> ordersAndListing(@PathVariable UUID branchId) {
 			return ResponseEntity.noContent().build();
 		}
 

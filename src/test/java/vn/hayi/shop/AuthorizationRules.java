@@ -11,6 +11,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 import org.springframework.web.bind.annotation.RestController;
 
+import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.security.RequiresStepUp;
 import vn.hayi.shop.platform.web.spec.backoffice.api.AuthApi;
@@ -24,7 +25,8 @@ public final class AuthorizationRules {
 		.should(new ArchCondition<>("be annotated with @RequiresStepUp when the permission is marked S") {
 			@Override
 			public void check(JavaMethod method, ConditionEvents events) {
-				boolean sensitive = method.getAnnotationOfType(RequiresPermission.class).value().requiresStepUp();
+				boolean sensitive = java.util.Arrays.stream(method.getAnnotationOfType(RequiresPermission.class).value())
+					.anyMatch(Permission::requiresStepUp);
 				if (sensitive && !method.isAnnotatedWith(RequiresStepUp.class)) {
 					events.add(SimpleConditionEvent.violated(method,
 							method.getFullName() + " requires a permission marked S but lacks @RequiresStepUp"));
