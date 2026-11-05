@@ -22,6 +22,8 @@ tags:
     description: Branch identity, lifecycle and business hours (Branch §4, API 09 §1)
   - name: FulfillmentConfigs
     description: How and when a Branch takes orders, per fulfillment type (Fulfillment §8, API 09 §2)
+  - name: Categories
+    description: The brand-level menu taxonomy, at most 2 levels (Catalog §5.3, API 08 §1.2, Decision Y)
 security:
   - accessCookie: []
 paths:
@@ -798,6 +800,171 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/FulfillmentConfigInvalid' }
+  /categories:
+    get:
+      tags: [Categories]
+      operationId: listCategories
+      summary: The Category tree
+      description: |
+        `CATALOG_VIEW` (brand-level: at any scope, Decision M1). Roots with their children, both sorted by
+        `sortOrder` (Decision Y5). Only `ACTIVE` unless `includeArchived=true`.
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The tree.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryTree' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Categories]
+      operationId: createCategory
+      summary: Create an ACTIVE Category, last among its siblings
+      description: |
+        `CATALOG_MANAGE`. `slug` is unique among every Category, archived ones included → `409 CATALOG_SLUG_TAKEN`
+        (Decision Y1). `parentId` must be an `ACTIVE` root: a child → `422 CATALOG_CATEGORY_DEPTH_EXCEEDED`, unknown →
+        `404 CATALOG_CATEGORY_NOT_FOUND`, archived → `409 CATALOG_CATEGORY_ARCHIVED` (Y2). Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryCreateRequest' }
+      responses:
+        '201':
+          description: The created Category.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: URL of the new Category.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '422': { $ref: '#/components/responses/CategoryDepthExceeded' }
+  /categories/order:
+    put:
+      tags: [Categories]
+      operationId: reorderCategories
+      summary: Set the order of one group of sibling Categories
+      description: |
+        `CATALOG_MANAGE`. `categoryIds` must be exactly the non-archived Categories under `parentId` (`null` = the
+        roots), in the new order; any other set → `409 CATALOG_CATEGORY_ORDER_STALE` (reload and retry). No
+        `If-Match`: the order spans many Categories, each with its own version; only moved ones get a new version
+        (Decision Y6). Unknown `parentId` → `404`, archived → `409 CATALOG_CATEGORY_ARCHIVED`. Audited when the order
+        changes. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryReorderRequest' }
+      responses:
+        '200':
+          description: The tree after the change (only `ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryTree' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+  /categories/{categoryId}:
+    parameters:
+      - $ref: '#/components/parameters/CategoryId'
+    get:
+      tags: [Categories]
+      operationId: getCategory
+      summary: One Category
+      description: '`CATALOG_VIEW`. Archived ones too. Unknown → `404 CATALOG_CATEGORY_NOT_FOUND`.'
+      responses:
+        '200':
+          description: The Category.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Categories]
+      operationId: updateCategory
+      summary: Edit a Category's name, slug, description or parent
+      description: |
+        `CATALOG_MANAGE`. JSON Merge Patch on `name`, `slug`, `description` (`null` clears) and `parentId` (`null` =
+        make it a root; a new parent puts it last there). Any other key → `400` (Decision Y3). The new parent follows
+        the rules of create; moving a Category that has non-archived children under another, or under itself →
+        `422 CATALOG_CATEGORY_DEPTH_EXCEEDED`. An archived Category → `409 CATALOG_CATEGORY_ARCHIVED`. Requires
+        `If-Match: "v{n}"` (missing → `428`, stale → `412`). Changed fields are audited; a patch that changes nothing
+        keeps the version. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/CategoryPatch' }
+      responses:
+        '200':
+          description: The Category after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/CategoryDepthExceeded' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /categories/{categoryId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/CategoryId'
+    post:
+      tags: [Categories]
+      operationId: archiveCategory
+      summary: Archive a Category for good
+      description: |
+        `CATALOG_MANAGE`. `ACTIVE → ARCHIVED`, no way back in MVP (Decision Y4). Already archived →
+        `409 CATALOG_CATEGORY_ARCHIVED`; still has a non-archived child (or, from BE #61, Product) →
+        `409 CATALOG_CATEGORY_IN_USE` (W5). Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The archived Category.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
 components:
   securitySchemes:
     accessCookie:
@@ -842,6 +1009,11 @@ components:
       required: true
       description: A malformed id is outside every scope → `403 BRANCH_SCOPE_DENIED` (Decision M1).
       schema: { type: string, format: uuid }
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   headers:
     SetCookie:
       description: Auth cookies (API 01-security §3).
@@ -852,6 +1024,85 @@ components:
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    CategoryStatus:
+      type: string
+      enum: [ACTIVE, ARCHIVED]
+      description: MVP uses only these two (Decision W5).
+    CategorySlug:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+      description: Lower-case kebab-case, unique among every Category (Decision Y1).
+    Category:
+      type: object
+      required: [categoryId, slug, name, description, parentId, sortOrder, status, version, createdAt, updatedAt]
+      properties:
+        categoryId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        parentId: { type: [string, 'null'], format: uuid, description: '`null` for a root.' }
+        sortOrder: { type: integer, format: int32 }
+        status: { $ref: '#/components/schemas/CategoryStatus' }
+        version: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CategoryNode:
+      type: object
+      description: A root Category with the fields of `Category` plus its children (which have none).
+      required: [categoryId, slug, name, description, parentId, sortOrder, status, version, createdAt, updatedAt,
+        children]
+      properties:
+        categoryId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        parentId: { type: [string, 'null'], format: uuid, description: Always `null`. }
+        sortOrder: { type: integer, format: int32 }
+        status: { $ref: '#/components/schemas/CategoryStatus' }
+        version: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+    CategoryTree:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CategoryNode' }
+    CategoryCreateRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { $ref: '#/components/schemas/CategorySlug' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
+        description: { type: [string, 'null'], maxLength: 500 }
+        parentId: { type: [string, 'null'], format: uuid }
+    CategoryPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        JSON Merge Patch of a Category (Decision Y3). Missing key = unchanged; `null` clears `description` and makes
+        it a root for `parentId`; `name` and `slug` cannot be `null` or blank.
+      properties:
+        name: { type: string, maxLength: 128 }
+        slug: { $ref: '#/components/schemas/CategorySlug' }
+        description: { type: [string, 'null'], maxLength: 500 }
+        parentId: { type: [string, 'null'], format: uuid }
+    CategoryReorderRequest:
+      type: object
+      required: [parentId, categoryIds]
+      properties:
+        parentId: { type: [string, 'null'], format: uuid, description: '`null` = the roots.' }
+        categoryIds:
+          type: array
+          maxItems: 500
+          description: In the new order; no duplicates (→ `400`).
+          items: { type: string, format: uuid }
     BranchStatus:
       type: string
       enum: [DRAFT, ACTIVE, INACTIVE, CLOSED]
@@ -1360,12 +1611,26 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     NotFound:
-      description: '`BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`'
+      description: |
+        `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
+        `CATALOG_CATEGORY_NOT_FOUND`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: '`BRANCH_CODE_TAKEN`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CategoryConflict:
+      description: |
+        `CATALOG_SLUG_TAKEN`, `CATALOG_CATEGORY_ARCHIVED`, `CATALOG_CATEGORY_IN_USE` or `CATALOG_CATEGORY_ORDER_STALE`
+        (Decision Y)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CategoryDepthExceeded:
+      description: '`CATALOG_CATEGORY_DEPTH_EXCEEDED` — the tree would get more than 2 levels (Decision Y2, Y3)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
