@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -48,17 +49,43 @@ public final class MergePatch {
 
 	/** A text field that cannot be cleared: {@code null} or blank is refused. */
 	public Change<String> requiredText(String key, int maxLength) {
-		return text(key, maxLength, false, null);
+		return text(key, maxLength, false, null, null);
+	}
+
+	/** A text field that cannot be cleared and must match {@code format} (violation {@code PATTERN}). */
+	public Change<String> requiredText(String key, int maxLength, Pattern format) {
+		return text(key, maxLength, false, format, "PATTERN");
 	}
 
 	/** A text field that {@code null} clears. */
 	public Change<String> optionalText(String key, int maxLength) {
-		return text(key, maxLength, true, null);
+		return text(key, maxLength, true, null, null);
 	}
 
 	/** A text field that {@code null} clears and that must otherwise look like an email address. */
 	public Change<String> optionalEmail(String key, int maxLength) {
-		return text(key, maxLength, true, EMAIL);
+		return text(key, maxLength, true, EMAIL, "EMAIL");
+	}
+
+	/** A UUID field that {@code null} clears. */
+	public Change<UUID> optionalUuid(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (value.isNull()) {
+			return Change.set(null);
+		}
+		if (value.isString()) {
+			try {
+				return Change.set(UUID.fromString(value.stringValue()));
+			}
+			catch (IllegalArgumentException ex) {
+				// falls through to the violation below
+			}
+		}
+		reject(key, "INVALID_TYPE");
+		return Change.keep();
 	}
 
 	/**
@@ -122,7 +149,7 @@ public final class MergePatch {
 		}
 	}
 
-	private Change<String> text(String key, int maxLength, boolean nullable, Pattern format) {
+	private Change<String> text(String key, int maxLength, boolean nullable, Pattern format, String formatCode) {
 		JsonNode value = read(key);
 		if (value == null) {
 			return Change.keep();
@@ -146,7 +173,7 @@ public final class MergePatch {
 			reject(key, "SIZE");
 		}
 		else if (format != null && !format.matcher(text).matches()) {
-			reject(key, "EMAIL");
+			reject(key, formatCode);
 		}
 		else {
 			return Change.set(text);
