@@ -30,22 +30,29 @@ final class AuthorizationInterceptor implements HandlerInterceptor {
 		if (!(handler instanceof HandlerMethod method) || !method.hasMethodAnnotation(RequiresPermission.class)) {
 			return true;
 		}
-		Permission permission = method.getMethodAnnotation(RequiresPermission.class).value();
 		AuthenticatedSession session = AuthenticatedSession.require();
 		String branchId = branchIdOf(request);
 		Optional<UUID> branch = (branchId != null) ? parse(branchId) : Optional.empty();
+		for (Permission permission : method.getMethodAnnotation(RequiresPermission.class).value()) {
+			check(session, permission, branchId, branch);
+		}
+		return true;
+	}
+
+	private void check(AuthenticatedSession session, Permission permission, String branchId, Optional<UUID> branch) {
 		AccessDecision decision = this.evaluator.evaluate(session.userId(), permission, branch);
 		if (decision == AccessDecision.GRANTED && branchId != null && branch.isEmpty()) {
 			// A malformed id names no Branch the caller may see; the permission was still checked first (Decision M1).
 			decision = AccessDecision.BRANCH_SCOPE_DENIED;
 		}
-		return switch (decision) {
-			case GRANTED -> true;
+		switch (decision) {
+			case GRANTED -> {
+			}
 			case PERMISSION_DENIED ->
 				throw new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission " + permission);
 			case BRANCH_SCOPE_DENIED ->
 				throw new DomainException(CommonErrorCode.BRANCH_SCOPE_DENIED, "Branch outside the caller's scope");
-		};
+		}
 	}
 
 	@SuppressWarnings("unchecked")

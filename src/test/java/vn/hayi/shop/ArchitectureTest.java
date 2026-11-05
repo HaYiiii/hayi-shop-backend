@@ -50,6 +50,9 @@ class ArchitectureTest {
 	@ArchTest
 	static final ArchRule backofficeEndpointsDeclarePermission = AuthorizationRules.backofficeEndpointsDeclarePermission;
 
+	@ArchTest
+	static final ArchRule permissionListIsNotEmpty = AuthorizationRules.permissionListIsNotEmpty;
+
 	/** Entities of one Branch are only found by {@code (branchId, …)} (API README §3.1, Decision S7). */
 	@ArchTest
 	static final ArchRule branchOwnedRepositoriesHaveNoBareIdLookups = BranchScopeRules.branchOwnedRepositoriesHaveNoBareIdLookups;

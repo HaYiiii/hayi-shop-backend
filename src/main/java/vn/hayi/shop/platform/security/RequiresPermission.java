@@ -16,13 +16,15 @@ import java.lang.annotation.Target;
  * <li>the caller lacks the permission at that Branch → {@code 403 PERMISSION_DENIED}.</li>
  * </ol>
  * Without {@code {branchId}} (a cross-Branch view) holding the permission somewhere is enough; the handler then
- * intersects its data with the caller's Branches. Step-up ({@link RequiresStepUp}) is checked last.
+ * intersects its data with the caller's Branches. Several permissions must <em>all</em> be held, each checked in that
+ * order (e.g. creating a Product sets prices: {@code CATALOG_MANAGE} and {@code CATALOG_PRICE_MANAGE}, Decision Z4).
+ * Step-up ({@link RequiresStepUp}) is checked last.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface RequiresPermission {
 
-	Permission value();
+	Permission[] value();
 
 }

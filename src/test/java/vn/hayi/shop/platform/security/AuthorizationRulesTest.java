@@ -29,6 +29,13 @@ class AuthorizationRulesTest {
 		assertThat(result.getFailureReport().getDetails()).singleElement().asString().contains("undeclared()");
 	}
 
+	@Test
+	void emptyPermissionListFailsTheRule() {
+		EvaluationResult result = AuthorizationRules.permissionListIsNotEmpty.evaluate(classes());
+
+		assertThat(result.getFailureReport().getDetails()).singleElement().asString().contains("anyone");
+	}
+
 	private static JavaClasses classes() {
 		return new ClassFileImporter().importClasses(Endpoints.class);
 	}
@@ -46,6 +53,10 @@ class AuthorizationRulesTest {
 
 		@RequiresPermission(Permission.REFUND_REQUEST)
 		void requestWithoutStepUp() {
+		}
+
+		@RequiresPermission({})
+		void anyone() {
 		}
 
 	}

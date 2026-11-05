@@ -1,0 +1,69 @@
+package vn.hayi.shop.catalog.domain;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Instant;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+
+import vn.hayi.shop.shared.error.DomainException;
+
+/** Invariants of a new Product (Catalog §5.2, Decision B, Z). */
+class ProductTest {
+
+	static final Instant T0 = Instant.parse("2026-11-05T02:00:00Z");
+
+	static final NewVariant M = new NewVariant("ml-m", "M", 45000, true);
+
+	static final NewVariant L = new NewVariant("ml-l", "L", 55000, false);
+
+	@Test
+	void startsDraftWithUpperCaseCodesAndActiveVariants() {
+		Product product = create(ProductType.STANDARD, null, List.of(M, L));
+
+		assertThat(product.getStatus()).isEqualTo(ProductStatus.DRAFT);
+		assertThat(product.getProductCode()).isEqualTo("MATCHA-LATTE");
+		assertThat(product.getVariants()).extracting(ProductVariant::getSku).containsExactly("ML-M", "ML-L");
+		assertThat(product.getVariants()).extracting(ProductVariant::getStatus).containsOnly(VariantStatus.ACTIVE);
+		assertThat(product.getVariants()).extracting(ProductVariant::getSortOrder).containsExactly(0, 1);
+		assertThat(product.fromPrice()).hasValue(45000);
+	}
+
+	@Test
+	void comboIsNotSupported() {
+		assertThatThrownBy(() -> create(ProductType.COMBO, null, List.of(M)))
+			.isInstanceOfSatisfying(DomainException.class,
+					ex -> assertThat(ex.code()).isEqualTo(CatalogErrorCode.PRODUCT_TYPE_NOT_SUPPORTED));
+	}
+
+	@Test
+	void variantsNeedExactlyOneDefaultUniqueSkusAndNoNegativePrice() {
+		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of()))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of(L)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of(M, new NewVariant("ML-M", "M2", 1, false))))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of(new NewVariant("x", "X", -1, true))))
+			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void primaryCategoryMustBeActive() {
+		Category active = Category.create("matcha", "Matcha", null, null, 0, T0);
+		assertThat(create(ProductType.STANDARD, active, List.of(M)).getPrimaryCategoryId()).isEqualTo(active.getId());
+
+		Category archived = Category.create("cu", "Cũ", null, null, 0, T0);
+		archived.archive(false, T0);
+		assertThatThrownBy(() -> create(ProductType.STANDARD, archived, List.of(M)))
+			.isInstanceOfSatisfying(DomainException.class,
+					ex -> assertThat(ex.code()).isEqualTo(CatalogErrorCode.CATALOG_CATEGORY_ARCHIVED));
+	}
+
+	private static Product create(ProductType type, Category category, List<NewVariant> variants) {
+		return Product.create("matcha-latte", "matcha-latte", "Matcha Latte", type, category, null, null, variants, T0);
+	}
+
+}
