@@ -81,14 +81,19 @@ public class CategoryService {
 		if (!newSlug.equals(category.getSlug()) && this.categories.existsBySlugAndIdNot(newSlug, categoryId)) {
 			throw slugTaken(newSlug);
 		}
+		// Every query runs before the first change to the entity: a query auto-flushes dirty state, and a slug taken
+		// meanwhile must fail in save(), where it becomes 409 CATALOG_SLUG_TAKEN rather than a 500.
+		UUID newParentId = changes.parentId().applyTo(category.getParentId());
+		boolean moves = !Objects.equals(newParentId, category.getParentId());
+		Category parent = (moves && newParentId != null) ? lock(newParentId) : null;
+		boolean hasChildren = moves
+				&& this.categories.existsByParentIdAndStatusNot(categoryId, CategoryStatus.ARCHIVED);
+		int position = moves ? nextPosition(newParentId) : category.getSortOrder();
 		Instant now = this.clock.instant();
 		FieldDiff diff = category.edit(changes.name().applyTo(category.getName()), newSlug,
 				changes.description().applyTo(category.getDescription()), now);
-		UUID newParentId = changes.parentId().applyTo(category.getParentId());
-		if (!Objects.equals(newParentId, category.getParentId())) {
-			Category parent = (newParentId != null) ? lock(newParentId) : null;
-			boolean hasChildren = this.categories.existsByParentIdAndStatusNot(categoryId, CategoryStatus.ARCHIVED);
-			category.moveTo(parent, hasChildren, nextPosition(newParentId), diff, now);
+		if (moves) {
+			category.moveTo(parent, hasChildren, position, diff, now);
 		}
 		if (diff.isEmpty()) {
 			return CategoryView.of(category);
@@ -132,8 +137,9 @@ public class CategoryService {
 			Map<UUID, Category> byId = new LinkedHashMap<>();
 			siblings.forEach(sibling -> byId.put(sibling.getId(), sibling));
 			Instant now = this.clock.instant();
-			for (int position = 0; position < categoryIds.size(); position++) {
-				byId.get(categoryIds.get(position)).placeAt(position, now);
+			int[] positions = reusedPositions(siblings);
+			for (int i = 0; i < categoryIds.size(); i++) {
+				byId.get(categoryIds.get(i)).placeAt(positions[i], now);
 			}
 			this.categories.flush();
 			record(client, "CATEGORY_REORDER", "CATEGORY_ORDER", (parentId != null) ? parentId : ROOTS,
@@ -162,6 +168,19 @@ public class CategoryService {
 			.filter(category -> category.getParentId() == null)
 			.map(root -> CategoryView.of(root, children.getOrDefault(root.getId(), List.of())))
 			.toList();
+	}
+
+	/**
+	 * The siblings' current {@code sortOrder} values, ascending, handed out in the new order: a Category that keeps its
+	 * place keeps its value (and its version, Decision Y6) even when archives left gaps. Equal values (two Categories
+	 * created at once) are pushed up just enough to stay strictly increasing.
+	 */
+	private static int[] reusedPositions(List<Category> siblings) {
+		int[] positions = siblings.stream().mapToInt(Category::getSortOrder).sorted().toArray();
+		for (int i = 1; i < positions.length; i++) {
+			positions[i] = Math.max(positions[i], positions[i - 1] + 1);
+		}
+		return positions;
 	}
 
 	private int nextPosition(UUID parentId) {

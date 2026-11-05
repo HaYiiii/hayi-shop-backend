@@ -271,6 +271,51 @@ class BackofficeCategoryTest {
 	}
 
 	@Test
+	void newParentMustExistAndBeActive() throws Exception {
+		String id = createdId(Map.of("slug", slug("lac"), "name", "Lạc"));
+		String archived = createdId(Map.of("slug", slug("da-luu"), "name", "Đã lưu"));
+		archive(archived, null);
+
+		assertProblem(update(id, "\"v0\"", "{\"parentId\": \"" + UUID.randomUUID() + "\"}"), 404,
+				"CATALOG_CATEGORY_NOT_FOUND");
+		assertProblem(update(id, "\"v0\"", "{\"parentId\": \"" + archived + "\"}"), 409,
+				"CATALOG_CATEGORY_ARCHIVED");
+		assertThat(detail(id).getHeader("ETag")).isEqualTo("\"v0\"");
+	}
+
+	@Test
+	void concurrentRenamesToOneSlugWhileMovingLetOnlyOneWin() throws Exception {
+		for (int round = 0; round < 5; round++) {
+			String contested = slug("dua");
+			List<String> ids = new ArrayList<>();
+			List<String> parents = new ArrayList<>();
+			for (int i = 0; i < 2; i++) {
+				ids.add(createdId(Map.of("slug", slug("nguon"), "name", "Nguồn")));
+				parents.add(createdId(Map.of("slug", slug("dich"), "name", "Đích")));
+			}
+			CountDownLatch start = new CountDownLatch(1);
+			try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+				List<Future<Integer>> results = new ArrayList<>();
+				for (int i = 0; i < 2; i++) {
+					String id = ids.get(i);
+					String parent = parents.get(i);
+					results.add(pool.submit(() -> {
+						start.await();
+						return update(id, "\"v0\"",
+								"{\"slug\": \"" + contested + "\", \"parentId\": \"" + parent + "\"}").getStatus();
+					}));
+				}
+				start.countDown();
+				List<Integer> statuses = new ArrayList<>();
+				for (Future<Integer> result : results) {
+					statuses.add(result.get(30, TimeUnit.SECONDS));
+				}
+				assertThat(statuses).as("round " + round).containsExactlyInAnyOrder(200, 409);
+			}
+		}
+	}
+
+	@Test
 	void movingACategoryWithChildrenUnderAnotherIsRejected() throws Exception {
 		String parent = createdId(Map.of("slug", slug("cha"), "name", "Cha"));
 		createdId(Map.of("slug", slug("con"), "name", "Con", "parentId", parent));
@@ -339,6 +384,38 @@ class BackofficeCategoryTest {
 
 		assertThat(reorder(parent, List.of(c, a, b)).getStatus()).isEqualTo(200);
 		assertThat(audits(parent, "CATEGORY_REORDER")).as("unchanged order").hasSize(1);
+	}
+
+	@Test
+	void reorderKeepsTheVersionOfCategoriesThatStayInPlace() throws Exception {
+		String parent = createdId(Map.of("slug", slug("khe"), "name", "Có khe"));
+		String a = createdId(Map.of("slug", slug("a"), "name", "A", "parentId", parent));
+		String b = createdId(Map.of("slug", slug("b"), "name", "B", "parentId", parent));
+		String c = createdId(Map.of("slug", slug("c"), "name", "C", "parentId", parent));
+		String d = createdId(Map.of("slug", slug("d"), "name", "D", "parentId", parent));
+		archive(b, null);
+
+		MockHttpServletResponse response = reorder(parent, List.of(c, a, d));
+
+		assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
+		Map<String, Object> node = node(response.getContentAsString(), parent);
+		assertThat(JsonPath.<List<String>>read(node, "$.children[*].categoryId")).containsExactly(c, a, d);
+		assertThat(detail(d).getHeader("ETag")).as("stays last").isEqualTo("\"v0\"");
+		assertThat(detail(c).getHeader("ETag")).as("moved").isEqualTo("\"v1\"");
+	}
+
+	@Test
+	void reorderOfTheRootsUsesANullParent() throws Exception {
+		createdId(Map.of("slug", slug("goc-1"), "name", "Gốc 1"));
+		createdId(Map.of("slug", slug("goc-2"), "name", "Gốc 2"));
+		List<String> roots = new ArrayList<>(rootIds(tree(false)));
+		java.util.Collections.reverse(roots);
+
+		MockHttpServletResponse response = reorder(null, roots);
+
+		assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
+		assertThat(rootIds(response.getContentAsString())).containsExactlyElementsOf(roots);
+		assertThat(audits(new UUID(0, 0).toString(), "CATEGORY_REORDER")).isNotEmpty();
 	}
 
 	@Test
