@@ -1,16 +1,22 @@
 package vn.hayi.shop.platform.web;
 
+import java.lang.reflect.Method;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.ElementKind;
+import jakarta.validation.Path;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.MethodParameter;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.core.annotation.AnnotatedMethod;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -25,9 +31,13 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.ClassUtils;
+import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
@@ -103,10 +113,51 @@ class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 		return handleInvalidFields(new InvalidFieldsException(violations), request);
 	}
 
-	/** {@code listPickupSlots.itemCount} → {@code itemCount}. */
+	/**
+	 * The parameter's name on the wire (Decision Y8): the {@code @RequestHeader} / {@code @RequestParam} /
+	 * {@code @PathVariable} name, e.g. {@code If-Match} rather than the Java {@code ifMatch}; the generated interface
+	 * carries these annotations, which {@link AnnotatedMethod} merges in. Falls back to the Java name.
+	 */
 	private static String parameterName(ConstraintViolation<?> violation) {
 		String path = violation.getPropertyPath().toString();
-		return path.substring(path.lastIndexOf('.') + 1);
+		String javaName = path.substring(path.lastIndexOf('.') + 1);
+		Path.MethodNode method = null;
+		Path.ParameterNode parameter = null;
+		for (Path.Node node : violation.getPropertyPath()) {
+			if (node.getKind() == ElementKind.METHOD) {
+				method = node.as(Path.MethodNode.class);
+			}
+			else if (node.getKind() == ElementKind.PARAMETER) {
+				parameter = node.as(Path.ParameterNode.class);
+			}
+		}
+		if (method == null || parameter == null) {
+			return javaName;
+		}
+		Method target = ReflectionUtils.findMethod(ClassUtils.getUserClass(violation.getRootBeanClass()),
+				method.getName(), method.getParameterTypes().toArray(Class<?>[]::new));
+		if (target == null) {
+			return javaName;
+		}
+		MethodParameter methodParameter = new AnnotatedMethod(target).getMethodParameters()[parameter
+			.getParameterIndex()];
+		return httpName(methodParameter).orElse(javaName);
+	}
+
+	private static Optional<String> httpName(MethodParameter parameter) {
+		RequestHeader header = parameter.getParameterAnnotation(RequestHeader.class);
+		if (header != null && StringUtils.hasText(header.name())) {
+			return Optional.of(header.name());
+		}
+		RequestParam param = parameter.getParameterAnnotation(RequestParam.class);
+		if (param != null && StringUtils.hasText(param.name())) {
+			return Optional.of(param.name());
+		}
+		PathVariable path = parameter.getParameterAnnotation(PathVariable.class);
+		if (path != null && StringUtils.hasText(path.name())) {
+			return Optional.of(path.name());
+		}
+		return Optional.empty();
 	}
 
 	/**
