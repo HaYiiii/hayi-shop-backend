@@ -144,6 +144,17 @@ public class Category {
 		return true;
 	}
 
+	/**
+	 * Usable as a Product's primary Category (Decision W5, Z5).
+	 * @throws DomainException {@code CATALOG_CATEGORY_ARCHIVED} unless {@code ACTIVE}
+	 */
+	public void requireActive() {
+		if (this.status != CategoryStatus.ACTIVE) {
+			throw new DomainException(CatalogErrorCode.CATALOG_CATEGORY_ARCHIVED,
+					"Category " + this.id + " is " + this.status);
+		}
+	}
+
 	public void requireNotArchived() {
 		if (this.status == CategoryStatus.ARCHIVED) {
 			throw new DomainException(CatalogErrorCode.CATALOG_CATEGORY_ARCHIVED,

@@ -24,6 +24,8 @@ tags:
     description: How and when a Branch takes orders, per fulfillment type (Fulfillment §8, API 09 §2)
   - name: Categories
     description: The brand-level menu taxonomy, at most 2 levels (Catalog §5.3, API 08 §1.2, Decision Y)
+  - name: Products
+    description: Brand-level Products and their Variants (Catalog §5.2, API 08 §1.3, Decision Z)
 security:
   - accessCookie: []
 paths:
@@ -947,7 +949,7 @@ paths:
       summary: Archive a Category for good
       description: |
         `CATALOG_MANAGE`. `ACTIVE → ARCHIVED`, no way back in MVP (Decision Y4). Already archived →
-        `409 CATALOG_CATEGORY_ARCHIVED`; still has a non-archived child (or, from BE #61, Product) →
+        `409 CATALOG_CATEGORY_ARCHIVED`; still has a non-archived child or a non-archived Product using it as primary →
         `409 CATALOG_CATEGORY_IN_USE` (W5). Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
       parameters:
         - $ref: '#/components/parameters/IfMatchOptional'
@@ -965,6 +967,104 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/CategoryConflict' }
         '412': { $ref: '#/components/responses/VersionConflict' }
+  /products:
+    get:
+      tags: [Products]
+      operationId: listProducts
+      summary: Products, filtered and paged
+      description: |
+        `CATALOG_VIEW` (brand-level). Offset paging (API README §5), sorted by `name` then id (Decision Z6). `q` matches
+        `name`, `productCode` or a Variant `sku`, case-insensitive.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, format: int32, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          required: false
+          schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 20 }
+        - name: status
+          in: query
+          required: false
+          description: Only Products in these statuses, e.g. `status=DRAFT,ACTIVE`.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/ProductStatus' }
+        - name: categoryId
+          in: query
+          required: false
+          description: Only Products with this primary Category.
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: One page of Products.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Products]
+      operationId: createProduct
+      summary: Create a DRAFT Product with its Variants
+      description: |
+        `CATALOG_MANAGE` **and** `CATALOG_PRICE_MANAGE`, since it sets prices (Decision Z4). Starts `DRAFT`, Variants
+        `ACTIVE` (Z1). `productCode`/`sku` are upper-cased and unique, archived included → `409 CATALOG_CODE_TAKEN` /
+        `CATALOG_SKU_TAKEN`; `slug` unique among Products → `409 CATALOG_SLUG_TAKEN` (Z2). One Variant is the default;
+        with more, exactly one `isDefault: true`, else `400` (Z3). `COMBO` → `422 PRODUCT_TYPE_NOT_SUPPORTED`.
+        `primaryCategoryId`, when sent, must be an `ACTIVE` Category: unknown → `404`, archived →
+        `409 CATALOG_CATEGORY_ARCHIVED` (Z5). Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductCreateRequest' }
+      responses:
+        '201':
+          description: The created Product.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: URL of the new Product.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductConflict' }
+        '422': { $ref: '#/components/responses/ProductTypeNotSupported' }
+  /products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [Products]
+      operationId: getProduct
+      summary: One Product with its Variants
+      description: '`CATALOG_VIEW`. Unknown → `404 CATALOG_PRODUCT_NOT_FOUND` (Decision Z7).'
+      responses:
+        '200':
+          description: The Product.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     accessCookie:
@@ -1014,6 +1114,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   headers:
     SetCookie:
       description: Auth cookies (API 01-security §3).
@@ -1024,6 +1129,105 @@ components:
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    ProductStatus:
+      type: string
+      enum: [DRAFT, ACTIVE, INACTIVE, ARCHIVED]
+      description: Lifecycle (Catalog §5.2).
+    ProductType:
+      type: string
+      enum: [STANDARD, COMBO]
+      description: Only `STANDARD` in v1; `COMBO` is roadmap (Decision B).
+    VariantStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, ARCHIVED]
+    CatalogCode:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$'
+      description: Upper-cased by the server; unique, archived included (Decision Z2).
+    ProductVariantInput:
+      type: object
+      required: [sku, name, basePrice]
+      properties:
+        sku: { $ref: '#/components/schemas/CatalogCode' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
+        basePrice: { $ref: './components/common.yaml#/components/schemas/MoneyVnd' }
+        isDefault: { type: [boolean, 'null'], description: 'Optional with one Variant; with more, exactly one `true`.' }
+    ProductCreateRequest:
+      type: object
+      required: [productCode, name, slug, variants]
+      properties:
+        productCode: { $ref: '#/components/schemas/CatalogCode' }
+        name: { type: string, minLength: 1, maxLength: 160, pattern: '[\s\S]*\S[\s\S]*' }
+        slug: { type: string, minLength: 1, maxLength: 160, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+        productType: { $ref: '#/components/schemas/ProductType' }
+        primaryCategoryId: { type: [string, 'null'], format: uuid }
+        shortDescription: { type: [string, 'null'], maxLength: 500 }
+        description: { type: [string, 'null'], maxLength: 10000 }
+        variants:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProductVariantInput' }
+    ProductVariant:
+      type: object
+      required: [variantId, sku, name, basePrice, isDefault, status, sortOrder]
+      properties:
+        variantId: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        basePrice: { $ref: './components/common.yaml#/components/schemas/MoneyVnd' }
+        isDefault: { type: boolean }
+        status: { $ref: '#/components/schemas/VariantStatus' }
+        sortOrder: { type: integer, format: int32 }
+    Product:
+      type: object
+      required: [productId, productCode, slug, name, productType, status, primaryCategoryId, shortDescription,
+        description, sortOrder, archivedAt, createdAt, updatedAt, version, variants]
+      properties:
+        productId: { type: string, format: uuid }
+        productCode: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        productType: { $ref: '#/components/schemas/ProductType' }
+        status: { $ref: '#/components/schemas/ProductStatus' }
+        primaryCategoryId: { type: [string, 'null'], format: uuid }
+        shortDescription: { type: [string, 'null'] }
+        description: { type: [string, 'null'] }
+        sortOrder: { type: integer, format: int32 }
+        archivedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/ProductVariant' }
+    ProductSummary:
+      type: object
+      required: [productId, productCode, slug, name, productType, status, primaryCategoryId, fromPrice, variantCount,
+        updatedAt, version]
+      properties:
+        productId: { type: string, format: uuid }
+        productCode: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        productType: { $ref: '#/components/schemas/ProductType' }
+        status: { $ref: '#/components/schemas/ProductStatus' }
+        primaryCategoryId: { type: [string, 'null'], format: uuid }
+        fromPrice:
+          type: [integer, 'null']
+          format: int64
+          description: Lowest `basePrice` among non-archived Variants; `null` when none.
+        variantCount: { type: integer, format: int32, description: Non-archived Variants. }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+    ProductPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ProductSummary' }
+        page: { $ref: './components/common.yaml#/components/schemas/OffsetPage' }
     CategoryStatus:
       type: string
       enum: [ACTIVE, ARCHIVED]
@@ -1613,12 +1817,22 @@ components:
     NotFound:
       description: |
         `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
-        `CATALOG_CATEGORY_NOT_FOUND`
+        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: '`BRANCH_CODE_TAKEN`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ProductConflict:
+      description: '`CATALOG_CODE_TAKEN`, `CATALOG_SKU_TAKEN`, `CATALOG_SLUG_TAKEN` or `CATALOG_CATEGORY_ARCHIVED` (Decision Z)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ProductTypeNotSupported:
+      description: '`PRODUCT_TYPE_NOT_SUPPORTED` — only `STANDARD` in v1 (Decision B)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

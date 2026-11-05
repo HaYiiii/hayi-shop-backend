@@ -23,6 +23,8 @@ import vn.hayi.shop.catalog.domain.Category;
 import vn.hayi.shop.catalog.domain.CategoryRepository;
 import vn.hayi.shop.catalog.domain.CategoryStatus;
 import vn.hayi.shop.catalog.domain.FieldDiff;
+import vn.hayi.shop.catalog.domain.ProductRepository;
+import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
@@ -41,12 +43,15 @@ public class CategoryService {
 
 	private final CategoryRepository categories;
 
+	private final ProductRepository products;
+
 	private final AuditRecorder audit;
 
 	private final Clock clock;
 
-	CategoryService(CategoryRepository categories, AuditRecorder audit, Clock clock) {
+	CategoryService(CategoryRepository categories, ProductRepository products, AuditRecorder audit, Clock clock) {
 		this.categories = categories;
+		this.products = products;
 		this.audit = audit;
 		this.clock = clock;
 	}
@@ -103,18 +108,24 @@ public class CategoryService {
 		return CategoryView.of(category);
 	}
 
-	/** {@code expected} is {@code null} when no {@code If-Match} was sent (optional on commands, Decision Y4). */
+	/**
+	 * {@code expected} is {@code null} when no {@code If-Match} was sent (optional on commands, Decision Y4). Refused
+	 * while a non-archived child Category or Product uses it (W5, Z8).
+	 */
 	@Transactional
 	public CategoryView archive(UUID categoryId, ExpectedVersion expected, Client client) {
 		Category category = lock(categoryId);
 		if (expected != null) {
 			expected.verify(category.getVersion());
 		}
-		category.archive(this.categories.existsByParentIdAndStatusNot(categoryId, CategoryStatus.ARCHIVED),
-				this.clock.instant());
+		// Product creation locks this row too, so a Product created meanwhile is seen here (Decision Z5).
+		boolean inUse = this.categories.existsByParentIdAndStatusNot(categoryId, CategoryStatus.ARCHIVED)
+				|| this.products.existsByPrimaryCategoryIdAndStatusNot(categoryId, ProductStatus.ARCHIVED);
+		CategoryStatus previous = category.getStatus();
+		category.archive(inUse, this.clock.instant());
 		this.categories.flush();
-		record(client, "CATEGORY_ARCHIVE", "CATEGORY", categoryId, Map.of("status", CategoryStatus.ACTIVE.name()),
-				Map.of("status", CategoryStatus.ARCHIVED.name()));
+		record(client, "CATEGORY_ARCHIVE", "CATEGORY", categoryId, Map.of("status", previous.name()),
+				Map.of("status", category.getStatus().name()));
 		return CategoryView.of(category);
 	}
 
