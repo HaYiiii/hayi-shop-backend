@@ -31,6 +31,7 @@ import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.catalog.domain.ProductType;
 import vn.hayi.shop.catalog.domain.ProductVariant;
+import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
 
 /**
@@ -100,6 +101,52 @@ public class ProductService {
 		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, "PRODUCT_CREATE", "PRODUCT",
 				product.getId())
 			.withNewValue(snapshot(product))
+			.withClient(client.ipAddress(), client.userAgent()));
+		return ProductView.of(product);
+	}
+
+	/**
+	 * {@code DRAFT | INACTIVE → ACTIVE} (Decision AA). The primary Category is locked so it cannot be archived while
+	 * this Product goes on sale. {@code expected} is {@code null} without {@code If-Match}.
+	 */
+	@Transactional
+	public ProductView activate(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+		Product product = find(productId, expected);
+		Category category = (product.getPrimaryCategoryId() != null)
+				? this.categories.findByIdForUpdate(product.getPrimaryCategoryId()).orElse(null) : null;
+		return transitioned(product, product.activate(category, this.clock.instant()), "PRODUCT_ACTIVATE", client);
+	}
+
+	/** {@code ACTIVE → INACTIVE} (Decision AA1). */
+	@Transactional
+	public ProductView deactivate(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+		Product product = find(productId, expected);
+		return transitioned(product, product.deactivate(this.clock.instant()), "PRODUCT_DEACTIVATE", client);
+	}
+
+	/** {@code DRAFT | ACTIVE | INACTIVE → ARCHIVED}, final (Decision AA1). */
+	@Transactional
+	public ProductView archive(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+		Product product = find(productId, expected);
+		return transitioned(product, product.archive(this.clock.instant()), "PRODUCT_ARCHIVE", client);
+	}
+
+	private Product find(UUID productId, ExpectedVersion expected) {
+		Product product = this.products.findById(productId)
+			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_PRODUCT_NOT_FOUND,
+					"No Product " + productId));
+		if (expected != null) {
+			expected.verify(product.getVersion());
+		}
+		return product;
+	}
+
+	private ProductView transitioned(Product product, ProductStatus previous, String action,
+			CategoryService.Client client) {
+		this.products.saveAndFlush(product);
+		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, action, "PRODUCT", product.getId())
+			.withOldValue(Map.of("status", previous.name()))
+			.withNewValue(Map.of("status", product.getStatus().name()))
 			.withClient(client.ipAddress(), client.userAgent()));
 		return ProductView.of(product);
 	}

@@ -69,6 +69,28 @@ class BackofficeProductController implements ProductsApi {
 	}
 
 	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> activateProduct(UUID productId, String ifMatch, String xCsrfToken) {
+		return withETag(this.products.activate(productId, VersionTags.optional(ifMatch), client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> deactivateProduct(UUID productId, String ifMatch, String xCsrfToken) {
+		return withETag(this.products.deactivate(productId, VersionTags.optional(ifMatch), client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> archiveProduct(UUID productId, String ifMatch, String xCsrfToken) {
+		return withETag(this.products.archive(productId, VersionTags.optional(ifMatch), client()));
+	}
+
+	private static ResponseEntity<ProductDto> withETag(ProductView product) {
+		return ResponseEntity.ok().eTag(VersionTags.of(product.version())).body(toDto(product));
+	}
+
+	@Override
 	@RequiresPermission(Permission.CATALOG_VIEW)
 	public ResponseEntity<ProductDto> getProduct(UUID productId) {
 		ProductView product = this.products.get(productId);
