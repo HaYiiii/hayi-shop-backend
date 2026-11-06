@@ -1065,6 +1065,87 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /products/{productId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Products]
+      operationId: activateProduct
+      summary: Put a DRAFT or INACTIVE Product on sale
+      description: |
+        `CATALOG_MANAGE`. `DRAFT | INACTIVE → ACTIVE` (Decision AA1). Needs an `ACTIVE` Variant and an `ACTIVE` primary
+        Category, else `422 PRODUCT_ACTIVATION_INVALID` with every missing condition in `issues[]` (AA2). Any other
+        status → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Product after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ProductActivationInvalid' }
+  /products/{productId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Products]
+      operationId: deactivateProduct
+      summary: Take an ACTIVE Product off sale
+      description: |
+        `CATALOG_MANAGE`. `ACTIVE → INACTIVE` (Decision AA1); any other status → `409 CATALOG_PRODUCT_INVALID_TRANSITION`.
+        Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Product after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /products/{productId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Products]
+      operationId: archiveProduct
+      summary: Archive a Product for good
+      description: |
+        `CATALOG_MANAGE`. `DRAFT | ACTIVE | INACTIVE → ARCHIVED`, final in MVP; sets `archivedAt`, never deletes (Catalog
+        §5.9, Decision AA1). Already archived → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Optional `If-Match`. Audited.
+        Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Product after the transition.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
 components:
   securitySchemes:
     accessCookie:
@@ -1129,6 +1210,23 @@ components:
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    ActivationIssueCode:
+      type: string
+      enum: [NO_ACTIVE_VARIANT, PRIMARY_CATEGORY_MISSING, PRIMARY_CATEGORY_INACTIVE]
+      description: Why a Product cannot be activated (Decision AA2); `OPTION_CONFIG_INVALID` comes with BE #64.
+    ProductActivationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [issues]
+          properties:
+            issues:
+              type: array
+              items:
+                type: object
+                required: [code]
+                properties:
+                  code: { $ref: '#/components/schemas/ActivationIssueCode' }
     ProductStatus:
       type: string
       enum: [DRAFT, ACTIVE, INACTIVE, ARCHIVED]
@@ -1826,6 +1924,16 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    ProductInvalidTransition:
+      description: '`CATALOG_PRODUCT_INVALID_TRANSITION` — not allowed from the current status (Decision AA1)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ProductActivationInvalid:
+      description: '`PRODUCT_ACTIVATION_INVALID` with `issues[]` (Decision AA2)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProductActivationProblem' }
     ProductConflict:
       description: '`CATALOG_CODE_TAKEN`, `CATALOG_SKU_TAKEN`, `CATALOG_SLUG_TAKEN` or `CATALOG_CATEGORY_ARCHIVED` (Decision Z)'
       content:

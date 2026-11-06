@@ -62,6 +62,30 @@ class ProductTest {
 					ex -> assertThat(ex.code()).isEqualTo(CatalogErrorCode.CATALOG_CATEGORY_ARCHIVED));
 	}
 
+	@Test
+	void lifecycleFollowsDecisionAA() {
+		Category category = Category.create("matcha", "Matcha", null, null, 0, T0);
+		Product product = create(ProductType.STANDARD, category, List.of(M));
+
+		assertThat(product.activate(category, T0)).isEqualTo(ProductStatus.DRAFT);
+		assertThat(product.deactivate(T0)).isEqualTo(ProductStatus.ACTIVE);
+		assertThat(product.activate(category, T0)).isEqualTo(ProductStatus.INACTIVE);
+		assertThat(product.archive(T0)).isEqualTo(ProductStatus.ACTIVE);
+		assertThat(product.getArchivedAt()).isEqualTo(T0);
+		assertThatThrownBy(() -> product.archive(T0)).isInstanceOfSatisfying(DomainException.class,
+				ex -> assertThat(ex.code()).isEqualTo(CatalogErrorCode.CATALOG_PRODUCT_INVALID_TRANSITION));
+	}
+
+	@Test
+	void activationReportsEveryMissingCondition() {
+		Product product = create(ProductType.STANDARD, null, List.of(M));
+
+		assertThatThrownBy(() -> product.activate(null, T0))
+			.isInstanceOfSatisfying(ProductActivationInvalidException.class,
+					ex -> assertThat(ex.issues()).containsExactly(ActivationIssue.PRIMARY_CATEGORY_MISSING));
+		assertThat(product.getStatus()).isEqualTo(ProductStatus.DRAFT);
+	}
+
 	private static Product create(ProductType type, Category category, List<NewVariant> variants) {
 		return Product.create("matcha-latte", "matcha-latte", "Matcha Latte", type, category, null, null, variants, T0);
 	}

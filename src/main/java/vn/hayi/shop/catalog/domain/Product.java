@@ -143,6 +143,60 @@ public class Product {
 		}
 	}
 
+	/**
+	 * {@code DRAFT | INACTIVE → ACTIVE} when it can be sold: an {@code ACTIVE} Variant and an {@code ACTIVE} primary
+	 * Category (Catalog §5.2, Decision AA1–AA2, W5). Returns the previous status.
+	 * @param primaryCategory the primary Category, locked by the caller, or {@code null} when there is none
+	 * @throws ProductActivationInvalidException listing every missing condition
+	 */
+	public ProductStatus activate(Category primaryCategory, Instant now) {
+		requireStatus("activate", ProductStatus.DRAFT, ProductStatus.INACTIVE);
+		List<ActivationIssue> issues = new ArrayList<>();
+		if (this.variants.stream().noneMatch(variant -> variant.getStatus() == VariantStatus.ACTIVE)) {
+			issues.add(ActivationIssue.NO_ACTIVE_VARIANT);
+		}
+		if (primaryCategory == null) {
+			issues.add(ActivationIssue.PRIMARY_CATEGORY_MISSING);
+		}
+		else if (primaryCategory.getStatus() != CategoryStatus.ACTIVE) {
+			issues.add(ActivationIssue.PRIMARY_CATEGORY_INACTIVE);
+		}
+		if (!issues.isEmpty()) {
+			throw new ProductActivationInvalidException(this.id, issues);
+		}
+		return moveTo(ProductStatus.ACTIVE, now);
+	}
+
+	/** {@code ACTIVE → INACTIVE} (Decision AA1). Returns the previous status. */
+	public ProductStatus deactivate(Instant now) {
+		requireStatus("deactivate", ProductStatus.ACTIVE);
+		return moveTo(ProductStatus.INACTIVE, now);
+	}
+
+	/**
+	 * {@code DRAFT | ACTIVE | INACTIVE → ARCHIVED}, final; the row and its Variants stay (Catalog §5.9, Decision AA1).
+	 * Returns the previous status.
+	 */
+	public ProductStatus archive(Instant now) {
+		requireStatus("archive", ProductStatus.DRAFT, ProductStatus.ACTIVE, ProductStatus.INACTIVE);
+		this.archivedAt = now;
+		return moveTo(ProductStatus.ARCHIVED, now);
+	}
+
+	private void requireStatus(String action, ProductStatus... allowed) {
+		if (!List.of(allowed).contains(this.status)) {
+			throw new DomainException(CatalogErrorCode.CATALOG_PRODUCT_INVALID_TRANSITION,
+					"Cannot " + action + " Product " + this.id + " in " + this.status, this.status.name());
+		}
+	}
+
+	private ProductStatus moveTo(ProductStatus next, Instant now) {
+		ProductStatus previous = this.status;
+		this.status = next;
+		this.updatedAt = now;
+		return previous;
+	}
+
 	/** Lowest base price among non-archived Variants, the list's "from" price (Decision Z6). */
 	public OptionalLong fromPrice() {
 		return liveVariants().stream().mapToLong(ProductVariant::getBasePrice).min();
