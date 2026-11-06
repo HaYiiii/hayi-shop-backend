@@ -26,6 +26,8 @@ tags:
     description: The brand-level menu taxonomy, at most 2 levels (Catalog §5.3, API 08 §1.2, Decision Y)
   - name: Products
     description: Brand-level Products and their Variants (Catalog §5.2, API 08 §1.3, Decision Z)
+  - name: OptionGroups
+    description: The brand-level option library — Size, Đường, Đá, Topping… (Catalog §5.4, API 08 §1.5, Decision AB)
 security:
   - accessCookie: []
 paths:
@@ -1045,7 +1047,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/ProductConflict' }
-        '422': { $ref: '#/components/responses/ProductTypeNotSupported' }
+        '422': { $ref: '#/components/responses/ProductRuleViolated' }
   /products/{productId}:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -1146,6 +1148,236 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/ProductInvalidTransition' }
         '412': { $ref: '#/components/responses/VersionConflict' }
+  /option-groups:
+    get:
+      tags: [OptionGroups]
+      operationId: listOptionGroups
+      summary: Every option group with its items
+      description: '`CATALOG_VIEW`. Not paged, sorted by `code`; items by `sortOrder`. Only `ACTIVE` unless `includeArchived=true` (Decision AB2).'
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The option groups.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroupList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [OptionGroups]
+      operationId: createOptionGroup
+      summary: Create an option group, optionally with its items
+      description: |
+        `CATALOG_MANAGE`, plus `CATALOG_PRICE_MANAGE` when an item has `defaultExtraPrice` ≠ 0 (Decision AB4). Codes are
+        upper-cased; a taken group code or an item code twice → `409 CATALOG_CODE_TAKEN` (AB1). Bad min/max or more
+        default items than `maxSelect` → `422 OPTION_GROUP_MINMAX_INVALID` (AB3); a negative price →
+        `422 CATALOG_PRICE_NEGATIVE`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OptionGroupCreateRequest' }
+      responses:
+        '201':
+          description: The created option group.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: URL of the new option group.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '422': { $ref: '#/components/responses/OptionRuleViolated' }
+  /option-groups/{optionGroupId}:
+    parameters:
+      - $ref: '#/components/parameters/OptionGroupId'
+    get:
+      tags: [OptionGroups]
+      operationId: getOptionGroup
+      summary: One option group with its items
+      description: '`CATALOG_VIEW`. Archived ones too. Unknown → `404 CATALOG_OPTION_GROUP_NOT_FOUND`.'
+      responses:
+        '200':
+          description: The option group.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [OptionGroups]
+      operationId: updateOptionGroup
+      summary: Edit an option group's name, selection type or min/max
+      description: |
+        `CATALOG_MANAGE`. JSON Merge Patch on `name`, `selectionType`, `minSelect`, `maxSelect`; any other key → `400`
+        (Decision AB2). The result must still satisfy AB3 → else `422 OPTION_GROUP_MINMAX_INVALID`. Archived →
+        `409 CATALOG_OPTION_ARCHIVED`. Requires `If-Match` (missing → `428`, stale → `412`). Changed fields are audited;
+        a patch that changes nothing keeps the version. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/OptionGroupPatch' }
+      responses:
+        '200':
+          description: The option group.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/OptionRuleViolated' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /option-groups/{optionGroupId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/OptionGroupId'
+    post:
+      tags: [OptionGroups]
+      operationId: archiveOptionGroup
+      summary: Archive an option group for good
+      description: |
+        `CATALOG_MANAGE`. `ACTIVE → ARCHIVED`, final (Decision AB3); Products using it are flagged at activation (W4,
+        BE #64), not blocked here. Already archived → `409 CATALOG_OPTION_ARCHIVED`. Optional `If-Match`. Audited.
+        Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The archived option group.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /option-groups/{optionGroupId}/items:
+    parameters:
+      - $ref: '#/components/parameters/OptionGroupId'
+    post:
+      tags: [OptionGroups]
+      operationId: addOptionItem
+      summary: Add an item to an option group, last in its order
+      description: |
+        `CATALOG_MANAGE`, plus `CATALOG_PRICE_MANAGE` when `defaultExtraPrice` ≠ 0 (Decision AB4). Bumps the group's
+        version (AB1). Item code taken in this group → `409 CATALOG_CODE_TAKEN`; archived group →
+        `409 CATALOG_OPTION_ARCHIVED`; more defaults than `maxSelect` → `422 OPTION_GROUP_MINMAX_INVALID`; negative
+        price → `422 CATALOG_PRICE_NEGATIVE`. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OptionItemInput' }
+      responses:
+        '201':
+          description: The option group with the new item.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/OptionRuleViolated' }
+  /option-groups/{optionGroupId}/items/{optionItemId}:
+    parameters:
+      - $ref: '#/components/parameters/OptionGroupId'
+      - $ref: '#/components/parameters/OptionItemId'
+    patch:
+      tags: [OptionGroups]
+      operationId: updateOptionItem
+      summary: Edit an item's name, default price or default selection
+      description: |
+        `CATALOG_MANAGE`, plus `CATALOG_PRICE_MANAGE` when the price changes (Decision AB4). JSON Merge Patch on
+        `name`, `defaultExtraPrice`, `isDefaultSelected`; any other key → `400`. Requires `If-Match` with the group's
+        version (AB1). Same rules as adding. Unknown item → `404 CATALOG_OPTION_ITEM_NOT_FOUND`. Changed fields are
+        audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/OptionItemPatch' }
+      responses:
+        '200':
+          description: The option group after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/OptionRuleViolated' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /option-groups/{optionGroupId}/items/{optionItemId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/OptionGroupId'
+      - $ref: '#/components/parameters/OptionItemId'
+    post:
+      tags: [OptionGroups]
+      operationId: archiveOptionItem
+      summary: Archive an item for good
+      description: |
+        `CATALOG_MANAGE`. `ACTIVE → ARCHIVED`, final; bumps the group's version (Decision AB1, AB3). Already archived →
+        `409 CATALOG_OPTION_ARCHIVED`. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The option group after the archive.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptionGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OptionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
 components:
   securitySchemes:
     accessCookie:
@@ -1200,6 +1432,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    OptionGroupId:
+      name: optionGroupId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OptionItemId:
+      name: optionItemId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   headers:
     SetCookie:
       description: Auth cookies (API 01-security §3).
@@ -1210,6 +1452,91 @@ components:
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    OptionSelectionType:
+      type: string
+      enum: [SINGLE, MULTIPLE]
+    OptionStatus:
+      type: string
+      enum: [ACTIVE, ARCHIVED]
+      description: MVP uses only these two (Decision AB3).
+    PriceInput:
+      type: integer
+      format: int64
+      description: VND; negative → `422 CATALOG_PRICE_NEGATIVE` (Decision AB4, Z2).
+    OptionItemInput:
+      type: object
+      required: [code, name]
+      properties:
+        code: { $ref: '#/components/schemas/CatalogCode' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
+        defaultExtraPrice: { $ref: '#/components/schemas/PriceInput' }
+        isDefaultSelected: { type: boolean }
+    OptionGroupCreateRequest:
+      type: object
+      required: [code, name, selectionType, minSelect, maxSelect]
+      properties:
+        code: { $ref: '#/components/schemas/CatalogCode' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
+        selectionType: { $ref: '#/components/schemas/OptionSelectionType' }
+        minSelect: { type: integer, format: int32 }
+        maxSelect: { type: integer, format: int32 }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/OptionItemInput' }
+    OptionGroupPatch:
+      type: object
+      additionalProperties: false
+      description: JSON Merge Patch (Decision AB2); every key is required when sent (no `null`).
+      properties:
+        name: { type: string, maxLength: 128 }
+        selectionType: { $ref: '#/components/schemas/OptionSelectionType' }
+        minSelect: { type: integer, format: int32 }
+        maxSelect: { type: integer, format: int32 }
+    OptionItemPatch:
+      type: object
+      additionalProperties: false
+      description: JSON Merge Patch (Decision AB2); every key is required when sent (no `null`).
+      properties:
+        name: { type: string, maxLength: 128 }
+        defaultExtraPrice: { $ref: '#/components/schemas/PriceInput' }
+        isDefaultSelected: { type: boolean }
+    OptionItem:
+      type: object
+      required: [optionItemId, code, name, defaultExtraPrice, isDefaultSelected, status, sortOrder]
+      properties:
+        optionItemId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        defaultExtraPrice: { type: integer, format: int64 }
+        isDefaultSelected: { type: boolean }
+        status: { $ref: '#/components/schemas/OptionStatus' }
+        sortOrder: { type: integer, format: int32 }
+    OptionGroup:
+      type: object
+      required: [optionGroupId, code, name, selectionType, minSelect, maxSelect, status, createdAt, updatedAt, version,
+        items]
+      properties:
+        optionGroupId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        selectionType: { $ref: '#/components/schemas/OptionSelectionType' }
+        minSelect: { type: integer, format: int32 }
+        maxSelect: { type: integer, format: int32 }
+        status: { $ref: '#/components/schemas/OptionStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OptionItem' }
+    OptionGroupList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OptionGroup' }
     ActivationIssueCode:
       type: string
       enum: [NO_ACTIVE_VARIANT, PRIMARY_CATEGORY_MISSING, PRIMARY_CATEGORY_INACTIVE]
@@ -1248,7 +1575,7 @@ components:
       properties:
         sku: { $ref: '#/components/schemas/CatalogCode' }
         name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*' }
-        basePrice: { $ref: './components/common.yaml#/components/schemas/MoneyVnd' }
+        basePrice: { $ref: '#/components/schemas/PriceInput' }
         isDefault: { type: [boolean, 'null'], description: 'Optional with one Variant; with more, exactly one `true`.' }
     ProductCreateRequest:
       type: object
@@ -1915,12 +2242,23 @@ components:
     NotFound:
       description: |
         `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
-        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`
+        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_OPTION_GROUP_NOT_FOUND`,
+        `CATALOG_OPTION_ITEM_NOT_FOUND`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: '`BRANCH_CODE_TAKEN`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    OptionConflict:
+      description: '`CATALOG_CODE_TAKEN` or `CATALOG_OPTION_ARCHIVED` (Decision AB)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    OptionRuleViolated:
+      description: '`OPTION_GROUP_MINMAX_INVALID`, or `CATALOG_PRICE_NEGATIVE` with `errors[]` (Decision AB3, AB4)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1939,8 +2277,8 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-    ProductTypeNotSupported:
-      description: '`PRODUCT_TYPE_NOT_SUPPORTED` — only `STANDARD` in v1 (Decision B)'
+    ProductRuleViolated:
+      description: '`PRODUCT_TYPE_NOT_SUPPORTED` (only `STANDARD` in v1, Decision B), or `CATALOG_PRICE_NEGATIVE` with `errors[]` (Z2)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

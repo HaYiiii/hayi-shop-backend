@@ -67,6 +67,70 @@ public final class MergePatch {
 		return text(key, maxLength, true, EMAIL, "EMAIL");
 	}
 
+	/** A whole number that cannot be cleared; its range is the domain's to check. */
+	public Change<Long> requiredLong(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (value.isNull()) {
+			reject(key, "NOT_BLANK");
+			return Change.keep();
+		}
+		if (!value.isIntegralNumber() || !value.canConvertToLong()) {
+			reject(key, "INVALID_TYPE");
+			return Change.keep();
+		}
+		return Change.set(value.longValue());
+	}
+
+	/** Like {@link #requiredLong} within {@code int}. */
+	public Change<Integer> requiredInt(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (value.isNull()) {
+			reject(key, "NOT_BLANK");
+		}
+		else if (!value.isIntegralNumber()) {
+			reject(key, "INVALID_TYPE");
+		}
+		else if (!value.canConvertToInt()) {
+			reject(key, "OUT_OF_RANGE");
+		}
+		else {
+			return Change.set(value.intValue());
+		}
+		return Change.keep();
+	}
+
+	/** A boolean that cannot be cleared. */
+	public Change<Boolean> requiredBoolean(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (!value.isBoolean()) {
+			reject(key, value.isNull() ? "NOT_BLANK" : "INVALID_TYPE");
+			return Change.keep();
+		}
+		return Change.set(value.booleanValue());
+	}
+
+	/** One of {@code allowed} (an API enum), which cannot be cleared. */
+	public Change<String> requiredEnum(String key, Set<String> allowed) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (!value.isString() || !allowed.contains(value.stringValue())) {
+			reject(key, value.isNull() ? "NOT_BLANK" : "INVALID_TYPE");
+			return Change.keep();
+		}
+		return Change.set(value.stringValue());
+	}
+
 	/** A UUID field that {@code null} clears. */
 	public Change<UUID> optionalUuid(String key) {
 		JsonNode value = read(key);

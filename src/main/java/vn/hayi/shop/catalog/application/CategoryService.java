@@ -25,7 +25,6 @@ import vn.hayi.shop.catalog.domain.CategoryStatus;
 import vn.hayi.shop.catalog.domain.FieldDiff;
 import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
-import vn.hayi.shop.shared.actor.ActorContext;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
 
@@ -57,7 +56,7 @@ public class CategoryService {
 	}
 
 	@Transactional
-	public CategoryView create(NewCategory request, Client client) {
+	public CategoryView create(NewCategory request, CatalogClient client) {
 		Category parent = (request.parentId() != null) ? lock(request.parentId()) : null;
 		if (this.categories.existsBySlug(request.slug())) {
 			throw slugTaken(request.slug());
@@ -78,7 +77,7 @@ public class CategoryService {
 	 * that changes nothing keeps the version and is not audited.
 	 */
 	@Transactional
-	public CategoryView update(UUID categoryId, CategoryChanges changes, ExpectedVersion expected, Client client) {
+	public CategoryView update(UUID categoryId, CategoryChanges changes, ExpectedVersion expected, CatalogClient client) {
 		Category category = lock(categoryId);
 		expected.verify(category.getVersion());
 		category.requireNotArchived();
@@ -113,7 +112,7 @@ public class CategoryService {
 	 * while a non-archived child Category or Product uses it (W5, Z8).
 	 */
 	@Transactional
-	public CategoryView archive(UUID categoryId, ExpectedVersion expected, Client client) {
+	public CategoryView archive(UUID categoryId, ExpectedVersion expected, CatalogClient client) {
 		Category category = lock(categoryId);
 		if (expected != null) {
 			expected.verify(category.getVersion());
@@ -134,7 +133,7 @@ public class CategoryService {
 	 * {@code categoryIds}, which must hold exactly them (Decision Y6). Only moved Categories get a new version.
 	 */
 	@Transactional
-	public List<CategoryView> reorder(UUID parentId, List<UUID> categoryIds, Client client) {
+	public List<CategoryView> reorder(UUID parentId, List<UUID> categoryIds, CatalogClient client) {
 		if (parentId != null) {
 			lock(parentId).requireNotArchived();
 		}
@@ -221,7 +220,7 @@ public class CategoryService {
 		return this.categories.findById(categoryId).orElseThrow(() -> notFound(categoryId));
 	}
 
-	private void record(Client client, String action, String entityType, UUID entityId, Map<String, ?> oldValue,
+	private void record(CatalogClient client, String action, String entityType, UUID entityId, Map<String, ?> oldValue,
 			Map<String, ?> newValue) {
 		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, action, entityType, entityId)
 			.withOldValue(oldValue)
@@ -235,10 +234,6 @@ public class CategoryService {
 
 	private static DomainException slugTaken(String slug) {
 		return new DomainException(CatalogErrorCode.CATALOG_SLUG_TAKEN, "Slug taken: " + slug, slug);
-	}
-
-	/** Who asked, for Audit. */
-	public record Client(ActorContext actor, String ipAddress, String userAgent) {
 	}
 
 }

@@ -179,7 +179,10 @@ class BackofficeProductTest {
 	void requestShapeIsValidated() throws Exception {
 		assertInvalid(create(simple("-bad", slug("x"), 1)), "productCode");
 		assertInvalid(create(simple(code("x"), "Not Kebab", 1)), "slug");
-		assertInvalid(create(simple(code("x"), slug("x"), -1)), "variants[0].basePrice");
+		MockHttpServletResponse negative = create(simple(code("x"), slug("x"), -1));
+		assertProblem(negative, 422, "CATALOG_PRICE_NEGATIVE");
+		assertThat(JsonPath.<List<String>>read(negative.getContentAsString(), "$.errors[*].field"))
+			.containsExactly("variants[0].basePrice");
 		assertInvalid(create("""
 				{"productCode": "%s", "name": "Rỗng", "slug": "%s", "variants": []}
 				""".formatted(code("x"), slug("x"))), "variants");
@@ -254,7 +257,8 @@ class BackofficeProductTest {
 
 	@Test
 	void creatingWithoutCatalogPriceManageIsDenied() throws Exception {
-		Session noPrice = this.fixtures.openSession(catalogManagerWithoutPricePermission());
+		Session noPrice = this.fixtures
+			.openSession(CatalogFixtures.catalogManagerWithoutPricePermission(this.jdbc, this.fixtures));
 
 		assertProblem(this.auth.perform(post(PRODUCTS).contentType(MediaType.APPLICATION_JSON)
 			.content(simple(code("no"), slug("no"), 1)), noPrice, true), 403, "PERMISSION_DENIED");
@@ -271,7 +275,7 @@ class BackofficeProductTest {
 		assertThat(this.auth.perform(get(PRODUCTS), manager, false).getStatus()).as("CATALOG_VIEW").isEqualTo(200);
 	}
 
-		// --- read ---------------------------------------------------------------------------------------------------
+	// --- read ---------------------------------------------------------------------------------------------------
 
 	@Test
 	void detailReturnsTheProductWithItsVariantsAndETag() throws Exception {
@@ -366,29 +370,6 @@ class BackofficeProductTest {
 			.content("{\"slug\": \"" + slug("danh-muc") + "\", \"name\": \"Danh mục\"}"), this.admin, true);
 		assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(201);
 		return JsonPath.read(created.getContentAsString(), "$.categoryId");
-	}
-
-	/**
-	 * No seed role has CATALOG_MANAGE without CATALOG_PRICE_MANAGE (API 01-security §7.1), so this test-only STORE
-	 * role isolates Decision Z4: an Admin's ADMIN role is swapped for it.
-	 */
-	private UUID catalogManagerWithoutPricePermission() {
-		this.jdbc.sql("""
-				INSERT IGNORE INTO iam_role (id, code, name, allowed_scope, is_system, requires_mfa, created_at, updated_at)
-				VALUES (?, 'TEST_CATALOG_NO_PRICE', 'Test: catalog without prices', 'STORE', 0, 1, NOW(6), NOW(6))
-				""").param(UuidBinary.toBytes(UUID.randomUUID())).update();
-		this.jdbc.sql("""
-				INSERT IGNORE INTO iam_role_permission (role_id, permission_id)
-				SELECT r.id, p.id FROM iam_role r JOIN iam_permission p ON p.code IN ('CATALOG_VIEW', 'CATALOG_MANAGE')
-				WHERE r.code = 'TEST_CATALOG_NO_PRICE'
-				""").update();
-		UUID userId = this.fixtures.storeAdmin(IdentityFixtures.uniqueEmail());
-		this.jdbc.sql("DELETE FROM iam_user_store_role WHERE user_id = ?").param(UuidBinary.toBytes(userId)).update();
-		this.jdbc.sql("""
-				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at)
-				SELECT ?, ?, id, NOW(6) FROM iam_role WHERE code = 'TEST_CATALOG_NO_PRICE'
-				""").param(UuidBinary.toBytes(UUID.randomUUID())).param(UuidBinary.toBytes(userId)).update();
-		return userId;
 	}
 
 	private UUID anyBranch() throws Exception {

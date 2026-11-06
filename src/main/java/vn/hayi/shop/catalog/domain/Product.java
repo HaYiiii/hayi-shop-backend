@@ -25,6 +25,7 @@ import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.OptimisticLock;
 
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.error.RuleViolationsException;
 import vn.hayi.shop.shared.id.UuidV7;
 
 /**
@@ -100,6 +101,15 @@ public class Product {
 		if (type != ProductType.STANDARD) {
 			throw new DomainException(CatalogErrorCode.PRODUCT_TYPE_NOT_SUPPORTED,
 					"Product type " + type + " is not supported yet");
+		}
+		List<RuleViolationsException.Violation> negative = new ArrayList<>();
+		for (int i = 0; i < variants.size(); i++) {
+			if (variants.get(i).basePrice() < 0) {
+				negative.add(new RuleViolationsException.Violation("variants[" + i + "].basePrice", "MIN"));
+			}
+		}
+		if (!negative.isEmpty()) {
+			throw new RuleViolationsException(CatalogErrorCode.CATALOG_PRICE_NEGATIVE, negative);
 		}
 		requireValidVariants(variants);
 		if (primaryCategory != null) {

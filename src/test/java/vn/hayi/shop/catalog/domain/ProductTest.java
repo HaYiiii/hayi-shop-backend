@@ -47,7 +47,8 @@ class ProductTest {
 		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of(M, new NewVariant("ML-M", "M2", 1, false))))
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> create(ProductType.STANDARD, null, List.of(new NewVariant("x", "X", -1, true))))
-			.isInstanceOf(IllegalArgumentException.class);
+			.isInstanceOfSatisfying(DomainException.class,
+					ex -> assertThat(ex.code()).isEqualTo(CatalogErrorCode.CATALOG_PRICE_NEGATIVE));
 	}
 
 	@Test

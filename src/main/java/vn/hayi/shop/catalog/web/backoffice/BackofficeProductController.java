@@ -16,7 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
-import vn.hayi.shop.catalog.application.CategoryService;
+import vn.hayi.shop.catalog.application.CatalogClient;
 import vn.hayi.shop.catalog.application.NewProduct;
 import vn.hayi.shop.catalog.application.ProductService;
 import vn.hayi.shop.catalog.application.ProductSummary;
@@ -138,9 +138,9 @@ class BackofficeProductController implements ProductsApi {
 			.toList();
 	}
 
-	private CategoryService.Client client() {
+	private CatalogClient client() {
 		ClientInfo client = ClientInfo.from(this.request);
-		return new CategoryService.Client(ActorContext.staff(AuthenticatedSession.require().userId(), null),
+		return new CatalogClient(ActorContext.staff(AuthenticatedSession.require().userId(), null),
 				client.ipAddress(), client.userAgent());
 	}
 
