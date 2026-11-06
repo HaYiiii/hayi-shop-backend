@@ -23,7 +23,6 @@ import vn.hayi.shop.catalog.domain.OptionGroup;
 import vn.hayi.shop.catalog.domain.OptionGroupRepository;
 import vn.hayi.shop.catalog.domain.OptionItem;
 import vn.hayi.shop.catalog.domain.OptionStatus;
-import vn.hayi.shop.catalog.domain.Product;
 import vn.hayi.shop.catalog.domain.SelectionType;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.CommonErrorCode;
@@ -37,8 +36,9 @@ import vn.hayi.shop.shared.patch.Change;
 @Service
 public class OptionGroupService {
 
-	private static final List<String> UNIQUE_KEYS = List.of("uk_cat_option_group__code",
-			"uk_cat_option_item__group_code");
+	private static final String GROUP_CODE_KEY = "uk_cat_option_group__code";
+
+	private static final String ITEM_CODE_KEY = "uk_cat_option_item__group_code";
 
 	private static final Pattern DUPLICATE_ENTRY = Pattern.compile("Duplicate entry '([^']*)'");
 
@@ -101,7 +101,7 @@ public class OptionGroupService {
 	public OptionGroupView addItem(UUID groupId, NewItem item, ExpectedVersion expected, CatalogClient client) {
 		OptionGroup group = find(groupId, expected);
 		OptionItem added = group.addItem(item.toDomain(), this.clock.instant());
-		save(group);
+		save(group, added.getCode());
 		Map<String, Object> values = new LinkedHashMap<>();
 		values.put("optionItemId", added.getId());
 		values.put("code", added.getCode());
@@ -165,11 +165,6 @@ public class OptionGroupService {
 		return found.stream().map(OptionGroupView::of).toList();
 	}
 
-	/** Codes as stored: trimmed and upper-cased (Decision Z2, AB1). */
-	public static String normalizeCode(String code) {
-		return Product.normalizeCode(code);
-	}
-
 	private OptionGroupView saved(OptionGroup group, FieldDiff diff, String action, UUID itemId,
 			CatalogClient client) {
 		if (diff.isEmpty()) {
@@ -199,13 +194,23 @@ public class OptionGroupService {
 	}
 
 	private void save(OptionGroup group) {
+		save(group, null);
+	}
+
+	/**
+	 * A concurrent change took a code after the checks. For the item key MySQL prints the group id as raw bytes, so
+	 * the code comes from the request ({@code itemCode}); for the group key it is read from the message.
+	 */
+	private void save(OptionGroup group, String itemCode) {
 		try {
 			this.groups.saveAndFlush(group);
 		}
 		catch (DataIntegrityViolationException ex) {
-			// A concurrent create took the code after the check; any other violation is a bug.
 			String message = NestedExceptionUtils.getMostSpecificCause(ex).getMessage();
-			if (message != null && UNIQUE_KEYS.stream().anyMatch(message::contains)) {
+			if (message != null && message.contains(ITEM_CODE_KEY)) {
+				throw codeTaken((itemCode != null) ? itemCode : group.getCode());
+			}
+			if (message != null && message.contains(GROUP_CODE_KEY)) {
 				Matcher matcher = DUPLICATE_ENTRY.matcher(message);
 				throw codeTaken(matcher.find() ? matcher.group(1) : group.getCode());
 			}

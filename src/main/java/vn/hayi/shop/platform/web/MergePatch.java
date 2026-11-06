@@ -77,8 +77,12 @@ public final class MergePatch {
 			reject(key, "NOT_BLANK");
 			return Change.keep();
 		}
-		if (!value.isIntegralNumber() || !value.canConvertToLong()) {
+		if (!value.isIntegralNumber()) {
 			reject(key, "INVALID_TYPE");
+			return Change.keep();
+		}
+		if (!value.canConvertToLong()) {
+			reject(key, "OUT_OF_RANGE");
 			return Change.keep();
 		}
 		return Change.set(value.longValue());

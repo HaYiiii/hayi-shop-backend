@@ -146,6 +146,9 @@ class BackofficeOptionGroupTest {
 			.content("{\"code\": \"free\", \"name\": \"Miễn phí\"}"), noPrice, true);
 		assertThat(added.getStatus()).as(added.getContentAsString()).isEqualTo(201);
 		String itemId = JsonPath.read(added.getContentAsString(), "$.items[0].optionItemId");
+		assertProblem(this.auth.perform(post(GROUPS + "/" + id + "/items").contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\": \"paid\", \"name\": \"Có giá\", \"defaultExtraPrice\": 5000}"), noPrice, true), 403,
+				"PERMISSION_DENIED");
 
 		assertProblem(this.auth.perform(patch(GROUPS + "/" + id + "/items/" + itemId).contentType(MERGE_PATCH)
 			.header("If-Match", "\"v1\"")
@@ -228,6 +231,38 @@ class BackofficeOptionGroupTest {
 		assertThat(audits).hasSize(1);
 		assertThat(JsonPath.<String>read((String) audits.getFirst().get("new_value"), "$.optionItemId"))
 			.isEqualTo(itemId);
+	}
+
+	@Test
+	void anItemPatchThatChangesNothingKeepsTheVersionAndIsNotAudited() throws Exception {
+		String id = createdId("""
+				{"code": "%s", "name": "Đường", "selectionType": "SINGLE", "minSelect": 0, "maxSelect": 1,
+				 "items": [{"code": "it", "name": "Ít đường", "defaultExtraPrice": 0, "isDefaultSelected": true}]}
+				""".formatted(code("noop")));
+		String itemId = JsonPath.read(detail(id).getContentAsString(), "$.items[0].optionItemId");
+
+		MockHttpServletResponse same = updateItem(id, itemId, "\"v0\"",
+				"{\"name\": \"Ít đường\", \"defaultExtraPrice\": 0, \"isDefaultSelected\": true}");
+
+		assertThat(same.getStatus()).as(same.getContentAsString()).isEqualTo(200);
+		assertThat(same.getHeader("ETag")).isEqualTo("\"v0\"");
+		assertThat(audits(id, "OPTION_ITEM_UPDATE")).isEmpty();
+	}
+
+	@Test
+	void commandsCheckAStaleIfMatchAndPatchIsCheckedAgainstTheRules() throws Exception {
+		String id = createdId(group("MULTIPLE", 0, 3));
+
+		assertProblem(this.auth.perform(post(GROUPS + "/" + id + "/items").contentType(MediaType.APPLICATION_JSON)
+			.header("If-Match", "\"v7\"")
+			.content("{\"code\": \"x\", \"name\": \"X\"}"), this.admin, true), 412, "VERSION_CONFLICT");
+		assertProblem(this.auth.perform(post(GROUPS + "/" + id + "/archive").header("If-Match", "\"v7\""), this.admin,
+				true), 412, "VERSION_CONFLICT");
+		assertProblem(addItem(id, "{\"code\": \"am\", \"name\": \"Âm\", \"defaultExtraPrice\": -1}"), 422,
+				"CATALOG_PRICE_NEGATIVE");
+		assertProblem(updateGroup(id, "\"v0\"", "{\"minSelect\": 4}"), 422, "OPTION_GROUP_MINMAX_INVALID");
+		assertProblem(updateGroup(id, "\"v0\"", "{\"maxSelect\": 0}"), 422, "OPTION_GROUP_MINMAX_INVALID");
+		assertInvalid(updateGroup(id, "\"v0\"", "{\"maxSelect\": 99999999999}"), "maxSelect");
 	}
 
 	@Test

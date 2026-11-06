@@ -4,10 +4,12 @@ import java.net.URI;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -49,7 +51,9 @@ class BackofficeOptionGroupController implements OptionGroupsApi {
 
 	private static final String GROUPS = "/api/backoffice/v1/option-groups/";
 
-	private static final Set<String> SELECTION_TYPES = Set.of("SINGLE", "MULTIPLE");
+	private static final Set<String> SELECTION_TYPES = Arrays.stream(OptionSelectionTypeDto.values())
+		.map(OptionSelectionTypeDto::getValue)
+		.collect(Collectors.toSet());
 
 	private final OptionGroupService groups;
 
