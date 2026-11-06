@@ -3,14 +3,21 @@ package vn.hayi.shop.catalog.domain;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -83,6 +90,21 @@ public class Product {
 	@OrderBy("sortOrder")
 	@BatchSize(size = 100)
 	private List<ProductVariant> variants = new ArrayList<>();
+
+	/** Attached option groups in order (Decision AC2); as for Variants, a change touches {@code updatedAt}. */
+	@ElementCollection
+	@CollectionTable(name = "cat_product_option_group", joinColumns = @JoinColumn(name = "product_id"))
+	@OrderBy("sortOrder")
+	@OptimisticLock(excluded = true)
+	@BatchSize(size = 100)
+	private List<ProductOptionGroupConfig> optionGroups = new ArrayList<>();
+
+	/** Price overrides and hidden items of the attached groups (Decision AC3). */
+	@ElementCollection
+	@CollectionTable(name = "cat_product_option_item_override", joinColumns = @JoinColumn(name = "product_id"))
+	@OptimisticLock(excluded = true)
+	@BatchSize(size = 100)
+	private Set<ProductOptionItemOverride> optionItemOverrides = new HashSet<>();
 
 	protected Product() {
 	}
@@ -157,24 +179,165 @@ public class Product {
 	 * {@code DRAFT | INACTIVE → ACTIVE} when it can be sold: an {@code ACTIVE} Variant and an {@code ACTIVE} primary
 	 * Category (Catalog §5.2, Decision AA1–AA2, W5). Returns the previous status.
 	 * @param primaryCategory the primary Category, locked by the caller, or {@code null} when there is none
+	 * @param attachedGroups the option groups attached to this Product, by id
 	 * @throws ProductActivationInvalidException listing every missing condition
 	 */
-	public ProductStatus activate(Category primaryCategory, Instant now) {
+	public ProductStatus activate(Category primaryCategory, Map<UUID, OptionGroup> attachedGroups, Instant now) {
 		requireStatus("activate", ProductStatus.DRAFT, ProductStatus.INACTIVE);
-		List<ActivationIssue> issues = new ArrayList<>();
+		List<ProductActivationInvalidException.Issue> issues = new ArrayList<>();
 		if (this.variants.stream().noneMatch(variant -> variant.getStatus() == VariantStatus.ACTIVE)) {
-			issues.add(ActivationIssue.NO_ACTIVE_VARIANT);
+			issues.add(ProductActivationInvalidException.Issue.of(ActivationIssue.NO_ACTIVE_VARIANT));
 		}
 		if (primaryCategory == null) {
-			issues.add(ActivationIssue.PRIMARY_CATEGORY_MISSING);
+			issues.add(ProductActivationInvalidException.Issue.of(ActivationIssue.PRIMARY_CATEGORY_MISSING));
 		}
 		else if (primaryCategory.getStatus() != CategoryStatus.ACTIVE) {
-			issues.add(ActivationIssue.PRIMARY_CATEGORY_INACTIVE);
+			// A guard: no endpoint sets a Category INACTIVE, and archiving a Category is refused while a non-archived
+			// Product uses it (W5), so only data changed outside the API reaches this.
+			issues.add(ProductActivationInvalidException.Issue.of(ActivationIssue.PRIMARY_CATEGORY_INACTIVE));
+		}
+		Set<UUID> hidden = this.optionItemOverrides.stream()
+			.filter(ProductOptionItemOverride::isHidden)
+			.map(ProductOptionItemOverride::optionItemId)
+			.collect(Collectors.toSet());
+		for (ProductOptionGroupConfig config : this.optionGroups) {
+			if (!validForSale(config, attachedGroups.get(config.optionGroupId()), hidden)) {
+				issues.add(new ProductActivationInvalidException.Issue(ActivationIssue.OPTION_CONFIG_INVALID,
+						config.optionGroupId()));
+			}
 		}
 		if (!issues.isEmpty()) {
 			throw new ProductActivationInvalidException(this.id, issues);
 		}
 		return moveTo(ProductStatus.ACTIVE, now);
+	}
+
+	/** W4: the group is {@code ACTIVE} and {@code min ≤ max ≤} its visible {@code ACTIVE} items (Decision AC4). */
+	private static boolean validForSale(ProductOptionGroupConfig config, OptionGroup group, Set<UUID> hidden) {
+		if (group == null || group.getStatus() != OptionStatus.ACTIVE) {
+			return false;
+		}
+		int min = config.effectiveMin(group);
+		int max = config.effectiveMax(group);
+		return min <= max && max <= group.visibleActiveItems(hidden);
+	}
+
+	/**
+	 * Replaces the attached option groups, in order (Decision AC2). Returns whether anything changed; overrides of
+	 * items whose group is no longer attached are dropped.
+	 * @param groups every group named in {@code choices}, found by the caller
+	 * @throws DomainException {@code CATALOG_PRODUCT_INVALID_TRANSITION} when archived, {@code CATALOG_OPTION_ARCHIVED},
+	 * {@code OPTION_GROUP_MINMAX_INVALID}
+	 */
+	public boolean replaceOptionGroups(List<OptionGroupChoice> choices, Map<UUID, OptionGroup> groups,
+			Instant now) {
+		requireNotArchived();
+		List<ProductOptionGroupConfig> next = new ArrayList<>();
+		for (int i = 0; i < choices.size(); i++) {
+			OptionGroupChoice choice = choices.get(i);
+			OptionGroup group = groups.get(choice.optionGroupId());
+			if (group.getStatus() != OptionStatus.ACTIVE) {
+				throw new DomainException(CatalogErrorCode.CATALOG_OPTION_ARCHIVED,
+						"Option group " + group.getId() + " is archived");
+			}
+			ProductOptionGroupConfig config = new ProductOptionGroupConfig(existingConfigId(choice.optionGroupId()),
+					choice.optionGroupId(), choice.minSelectOverride(), choice.maxSelectOverride(), i);
+			OptionGroup.requireValidLimits(group.getSelectionType(), config.effectiveMin(group),
+					config.effectiveMax(group));
+			next.add(config);
+		}
+		if (sameChoices(this.optionGroups, next)) {
+			return false;
+		}
+		this.optionGroups.clear();
+		this.optionGroups.addAll(next);
+		Set<UUID> attachedItems = itemsOf(groups.values());
+		this.optionItemOverrides.removeIf(override -> !attachedItems.contains(override.optionItemId()));
+		this.updatedAt = now;
+		return true;
+	}
+
+	/**
+	 * Replaces the item overrides (Decision AC3). Returns whether anything changed.
+	 * @param attachedGroups the groups attached to this Product
+	 * @throws DomainException {@code OPTION_ITEM_NOT_ATTACHED}; {@code CATALOG_PRICE_NEGATIVE} with {@code errors[]}
+	 */
+	public boolean replaceItemOverrides(List<ProductOptionItemOverride> overrides,
+			Map<UUID, OptionGroup> attachedGroups, Instant now) {
+		requireNotArchived();
+		List<RuleViolationsException.Violation> negative = new ArrayList<>();
+		for (int i = 0; i < overrides.size(); i++) {
+			Long price = overrides.get(i).extraPriceOverride();
+			if (price != null && price < 0) {
+				negative.add(new RuleViolationsException.Violation("overrides[" + i + "].extraPriceOverride", "MIN"));
+			}
+		}
+		if (!negative.isEmpty()) {
+			throw new RuleViolationsException(CatalogErrorCode.CATALOG_PRICE_NEGATIVE, negative);
+		}
+		Set<UUID> attachedItems = itemsOf(attachedGroups.values());
+		for (ProductOptionItemOverride override : overrides) {
+			if (!attachedItems.contains(override.optionItemId())) {
+				throw new DomainException(CatalogErrorCode.OPTION_ITEM_NOT_ATTACHED,
+						"Option item " + override.optionItemId() + " is not in a group of Product " + this.id);
+			}
+		}
+		Set<ProductOptionItemOverride> next = new HashSet<>(overrides);
+		if (next.equals(this.optionItemOverrides)) {
+			return false;
+		}
+		this.optionItemOverrides.clear();
+		this.optionItemOverrides.addAll(next);
+		this.updatedAt = now;
+		return true;
+	}
+
+	/** Whether {@code overrides} would change the override price of some item (Decision AC3). */
+	public boolean changesOverridePrices(List<ProductOptionItemOverride> overrides) {
+		Map<UUID, Long> current = new HashMap<>();
+		this.optionItemOverrides
+			.forEach(override -> current.put(override.optionItemId(), override.extraPriceOverride()));
+		Set<UUID> kept = new HashSet<>();
+		for (ProductOptionItemOverride override : overrides) {
+			kept.add(override.optionItemId());
+			if (!Objects.equals(current.get(override.optionItemId()), override.extraPriceOverride())) {
+				return true;
+			}
+		}
+		return current.entrySet()
+			.stream()
+			.anyMatch(entry -> !kept.contains(entry.getKey()) && entry.getValue() != null);
+	}
+
+	private UUID existingConfigId(UUID groupId) {
+		return this.optionGroups.stream()
+			.filter(config -> config.optionGroupId().equals(groupId))
+			.map(ProductOptionGroupConfig::id)
+			.findFirst()
+			.orElseGet(UuidV7::generate);
+	}
+
+	private static boolean sameChoices(List<ProductOptionGroupConfig> current, List<ProductOptionGroupConfig> next) {
+		if (current.size() != next.size()) {
+			return false;
+		}
+		for (int i = 0; i < current.size(); i++) {
+			if (!current.get(i).sameChoiceAs(next.get(i))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static Set<UUID> itemsOf(Collection<OptionGroup> groups) {
+		return groups.stream()
+			.flatMap(group -> group.getItems().stream())
+			.map(OptionItem::getId)
+			.collect(Collectors.toSet());
+	}
+
+	private void requireNotArchived() {
+		requireStatus("configure the options of", ProductStatus.DRAFT, ProductStatus.ACTIVE, ProductStatus.INACTIVE);
 	}
 
 	/** {@code ACTIVE → INACTIVE} (Decision AA1). Returns the previous status. */
@@ -274,6 +437,14 @@ public class Product {
 
 	public List<ProductVariant> getVariants() {
 		return List.copyOf(this.variants);
+	}
+
+	public List<ProductOptionGroupConfig> getOptionGroups() {
+		return List.copyOf(this.optionGroups);
+	}
+
+	public Set<ProductOptionItemOverride> getOptionItemOverrides() {
+		return Set.copyOf(this.optionItemOverrides);
 	}
 
 }

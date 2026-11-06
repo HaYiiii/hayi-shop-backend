@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -68,9 +70,9 @@ class ProductTest {
 		Category category = Category.create("matcha", "Matcha", null, null, 0, T0);
 		Product product = create(ProductType.STANDARD, category, List.of(M));
 
-		assertThat(product.activate(category, T0)).isEqualTo(ProductStatus.DRAFT);
+		assertThat(product.activate(category, Map.of(), T0)).isEqualTo(ProductStatus.DRAFT);
 		assertThat(product.deactivate(T0)).isEqualTo(ProductStatus.ACTIVE);
-		assertThat(product.activate(category, T0)).isEqualTo(ProductStatus.INACTIVE);
+		assertThat(product.activate(category, Map.of(), T0)).isEqualTo(ProductStatus.INACTIVE);
 		assertThat(product.archive(T0)).isEqualTo(ProductStatus.ACTIVE);
 		assertThat(product.getArchivedAt()).isEqualTo(T0);
 		assertThatThrownBy(() -> product.archive(T0)).isInstanceOfSatisfying(DomainException.class,
@@ -81,10 +83,41 @@ class ProductTest {
 	void activationReportsEveryMissingCondition() {
 		Product product = create(ProductType.STANDARD, null, List.of(M));
 
-		assertThatThrownBy(() -> product.activate(null, T0))
+		assertThatThrownBy(() -> product.activate(null, Map.of(), T0))
 			.isInstanceOfSatisfying(ProductActivationInvalidException.class,
-					ex -> assertThat(ex.issues()).containsExactly(ActivationIssue.PRIMARY_CATEGORY_MISSING));
+					ex -> assertThat(ex.issues()).extracting(ProductActivationInvalidException.Issue::code)
+						.containsExactly(ActivationIssue.PRIMARY_CATEGORY_MISSING));
 		assertThat(product.getStatus()).isEqualTo(ProductStatus.DRAFT);
+	}
+
+	@Test
+	void optionConfigFollowsW4() {
+		Category category = Category.create("matcha", "Matcha", null, null, 0, T0);
+		Product product = create(ProductType.STANDARD, category, List.of(M));
+		OptionGroup milk = OptionGroup.create("sua", "Sữa", SelectionType.SINGLE, 1, 1,
+				List.of(new NewOptionItem("tuoi", "Sữa tươi", 0, true), new NewOptionItem("yen", "Yến mạch", 10000, false)),
+				T0);
+		Map<UUID, OptionGroup> groups = Map.of(milk.getId(), milk);
+
+		assertThat(product.replaceOptionGroups(List.of(new OptionGroupChoice(milk.getId(), null, null)), groups, T0))
+			.isTrue();
+		assertThat(product.replaceOptionGroups(List.of(new OptionGroupChoice(milk.getId(), null, null)), groups, T0))
+			.as("same choice")
+			.isFalse();
+		List<UUID> items = milk.getItems().stream().map(OptionItem::getId).toList();
+		product.replaceItemOverrides(List.of(new ProductOptionItemOverride(items.get(0), null, true),
+				new ProductOptionItemOverride(items.get(1), null, true)), groups, T0);
+
+		assertThatThrownBy(() -> product.activate(category, groups, T0))
+			.isInstanceOfSatisfying(ProductActivationInvalidException.class,
+					ex -> assertThat(ex.issues()).containsExactly(
+							new ProductActivationInvalidException.Issue(ActivationIssue.OPTION_CONFIG_INVALID,
+									milk.getId())));
+		assertThat(product.changesOverridePrices(List.of(new ProductOptionItemOverride(items.get(0), 5000L, true))))
+			.isTrue();
+		assertThat(product.changesOverridePrices(List.of(new ProductOptionItemOverride(items.get(0), null, false))))
+			.as("hiding only")
+			.isFalse();
 	}
 
 	private static Product create(ProductType type, Category category, List<NewVariant> variants) {

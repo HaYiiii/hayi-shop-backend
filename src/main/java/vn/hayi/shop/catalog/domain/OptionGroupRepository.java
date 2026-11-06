@@ -1,5 +1,6 @@
 package vn.hayi.shop.catalog.domain;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,8 @@ public interface OptionGroupRepository extends Repository<OptionGroup, UUID> {
 	Optional<OptionGroup> findById(UUID id);
 
 	boolean existsByCode(String code);
+
+	List<OptionGroup> findByIdIn(Collection<UUID> ids);
 
 	List<OptionGroup> findAllByOrderByCodeAsc();
 
