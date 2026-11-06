@@ -190,6 +190,19 @@ public class OptionGroup {
 			.count();
 	}
 
+	/**
+	 * The limits of AB3 without the default-item rule, for a Product's effective min/max (Decision AC2).
+	 * @throws DomainException {@code OPTION_GROUP_MINMAX_INVALID}
+	 */
+	public static void requireValidLimits(SelectionType type, int min, int max) {
+		requireValidSelection(type, min, max, 0);
+	}
+
+	/** {@code ACTIVE} items not in {@code hidden}, for W4 (Decision AC4). */
+	public long visibleActiveItems(Set<UUID> hidden) {
+		return this.items.stream().filter(OptionItem::isActive).filter(item -> !hidden.contains(item.getId())).count();
+	}
+
 	/** Checked before anything changes, so a refused change leaves the group as it was (AB3). */
 	private static void requireValidSelection(SelectionType type, int min, int max, long defaults) {
 		boolean valid = min >= 0 && max >= 1 && max >= min && (type != SelectionType.SINGLE || max == 1)

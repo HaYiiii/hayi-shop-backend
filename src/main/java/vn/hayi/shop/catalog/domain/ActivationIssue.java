@@ -1,8 +1,8 @@
 package vn.hayi.shop.catalog.domain;
 
-/** Why a Product cannot be activated (Decision AA2); {@code OPTION_CONFIG_INVALID} comes with BE #64 (W4). */
+/** Why a Product cannot be activated (Decision AA2, W4/AC4). */
 public enum ActivationIssue {
 
-	NO_ACTIVE_VARIANT, PRIMARY_CATEGORY_MISSING, PRIMARY_CATEGORY_INACTIVE
+	NO_ACTIVE_VARIANT, PRIMARY_CATEGORY_MISSING, PRIMARY_CATEGORY_INACTIVE, OPTION_CONFIG_INVALID
 
 }

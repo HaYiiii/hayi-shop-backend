@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -21,15 +22,22 @@ import vn.hayi.shop.catalog.application.NewProduct;
 import vn.hayi.shop.catalog.application.ProductService;
 import vn.hayi.shop.catalog.application.ProductSummary;
 import vn.hayi.shop.catalog.application.ProductView;
+import vn.hayi.shop.platform.security.AccessDecision;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.Permission;
+import vn.hayi.shop.platform.security.PermissionEvaluator;
 import vn.hayi.shop.platform.security.RequiresPermission;
 import vn.hayi.shop.platform.web.InvalidFieldsException;
 import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.ProductsApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductCreateRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.OptionSelectionTypeDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupsReplaceRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionItemOverrideDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionItemOverridesReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductPageDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductPagePageDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductStatusDto;
@@ -48,10 +56,14 @@ class BackofficeProductController implements ProductsApi {
 
 	private final ProductService products;
 
+	private final PermissionEvaluator permissions;
+
 	private final HttpServletRequest request;
 
-	BackofficeProductController(ProductService products, HttpServletRequest request) {
+	BackofficeProductController(ProductService products, PermissionEvaluator permissions,
+			HttpServletRequest request) {
 		this.products = products;
+		this.permissions = permissions;
 		this.request = request;
 	}
 
@@ -72,6 +84,47 @@ class BackofficeProductController implements ProductsApi {
 	@RequiresPermission(Permission.CATALOG_MANAGE)
 	public ResponseEntity<ProductDto> activateProduct(UUID productId, String ifMatch, String xCsrfToken) {
 		return withETag(this.products.activate(productId, VersionTags.optional(ifMatch), client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> replaceProductOptionGroups(UUID productId,
+			ProductOptionGroupsReplaceRequestDto body, String ifMatch, String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		Set<UUID> seen = new HashSet<>();
+		List<ProductService.GroupChoice> choices = new ArrayList<>();
+		for (var group : body.getGroups()) {
+			if (!seen.add(group.getOptionGroupId())) {
+				throw duplicate("groups");
+			}
+			choices.add(new ProductService.GroupChoice(group.getOptionGroupId(), group.getMinSelectOverride(),
+					group.getMaxSelectOverride()));
+		}
+		return withETag(this.products.replaceOptionGroups(productId, choices, expected, client()));
+	}
+
+	/** Changing an override price needs {@code CATALOG_PRICE_MANAGE} on top (Decision AC3). */
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> replaceProductOptionItemOverrides(UUID productId,
+			ProductOptionItemOverridesReplaceRequestDto body, String ifMatch, String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		Set<UUID> seen = new HashSet<>();
+		List<ProductService.ItemOverride> overrides = new ArrayList<>();
+		for (var override : body.getOverrides()) {
+			if (!seen.add(override.getOptionItemId())) {
+				throw duplicate("overrides");
+			}
+			overrides.add(new ProductService.ItemOverride(override.getOptionItemId(),
+					override.getExtraPriceOverride(), override.getIsHidden()));
+		}
+		boolean mayChangePrice = this.permissions.evaluate(AuthenticatedSession.require().userId(),
+				Permission.CATALOG_PRICE_MANAGE, Optional.empty()) == AccessDecision.GRANTED;
+		return withETag(this.products.replaceItemOverrides(productId, overrides, mayChangePrice, expected, client()));
+	}
+
+	private static InvalidFieldsException duplicate(String field) {
+		return new InvalidFieldsException(List.of(new InvalidFieldsException.Violation(field, "DUPLICATE")));
 	}
 
 	@Override
@@ -153,6 +206,15 @@ class BackofficeProductController implements ProductsApi {
 					.map(variant -> new ProductVariantDto(variant.variantId(), variant.sku(), variant.name(),
 							variant.basePrice(), variant.isDefault(), VariantStatusDto.valueOf(variant.status()),
 							variant.sortOrder()))
+					.toList(),
+				product.optionGroups().stream()
+					.map(group -> new ProductOptionGroupDto(group.optionGroupId(), group.code(), group.name(),
+							OptionSelectionTypeDto.valueOf(group.selectionType()), group.minSelect(), group.maxSelect(),
+							group.minSelectOverride(), group.maxSelectOverride(), group.sortOrder()))
+					.toList(),
+				product.optionItemOverrides().stream()
+					.map(override -> new ProductOptionItemOverrideDto(override.optionItemId(),
+							override.extraPriceOverride(), override.isHidden()))
 					.toList());
 	}
 

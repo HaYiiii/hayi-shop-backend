@@ -2,6 +2,7 @@ package vn.hayi.shop.catalog.application;
 
 import java.time.Clock;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,12 +27,18 @@ import vn.hayi.shop.catalog.domain.CatalogErrorCode;
 import vn.hayi.shop.catalog.domain.Category;
 import vn.hayi.shop.catalog.domain.CategoryRepository;
 import vn.hayi.shop.catalog.domain.NewVariant;
+import vn.hayi.shop.catalog.domain.OptionGroup;
+import vn.hayi.shop.catalog.domain.OptionGroupChoice;
+import vn.hayi.shop.catalog.domain.OptionGroupRepository;
 import vn.hayi.shop.catalog.domain.Product;
+import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
+import vn.hayi.shop.catalog.domain.ProductOptionItemOverride;
 import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.catalog.domain.ProductType;
 import vn.hayi.shop.catalog.domain.ProductVariant;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
+import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 
 /**
@@ -53,13 +60,17 @@ public class ProductService {
 
 	private final CategoryRepository categories;
 
+	private final OptionGroupRepository optionGroups;
+
 	private final AuditRecorder audit;
 
 	private final Clock clock;
 
-	ProductService(ProductRepository products, CategoryRepository categories, AuditRecorder audit, Clock clock) {
+	ProductService(ProductRepository products, CategoryRepository categories, OptionGroupRepository optionGroups,
+			AuditRecorder audit, Clock clock) {
 		this.products = products;
 		this.categories = categories;
+		this.optionGroups = optionGroups;
 		this.audit = audit;
 		this.clock = clock;
 	}
@@ -102,7 +113,7 @@ public class ProductService {
 				product.getId())
 			.withNewValue(snapshot(product))
 			.withClient(client.ipAddress(), client.userAgent()));
-		return ProductView.of(product);
+		return view(product);
 	}
 
 	/**
@@ -114,7 +125,117 @@ public class ProductService {
 		Product product = find(productId, expected);
 		Category category = (product.getPrimaryCategoryId() != null)
 				? this.categories.findByIdForUpdate(product.getPrimaryCategoryId()).orElse(null) : null;
-		return transitioned(product, product.activate(category, this.clock.instant()), "PRODUCT_ACTIVATE", client);
+		return transitioned(product, product.activate(category, attachedGroups(product), this.clock.instant()),
+				"PRODUCT_ACTIVATE", client);
+	}
+
+	/**
+	 * Replaces the option groups the Product offers (Decision AC2) at {@code expected} version. Every named group must
+	 * exist; a change that changes nothing keeps the version and is not audited.
+	 */
+	@Transactional
+	public ProductView replaceOptionGroups(UUID productId, List<GroupChoice> requested, ExpectedVersion expected,
+			CatalogClient client) {
+		List<OptionGroupChoice> choices = requested.stream()
+			.map(choice -> new OptionGroupChoice(choice.optionGroupId(), choice.minSelectOverride(),
+					choice.maxSelectOverride()))
+			.toList();
+		Product product = find(productId, expected);
+		Map<UUID, OptionGroup> named = groupsById(choices.stream().map(OptionGroupChoice::optionGroupId).toList());
+		for (OptionGroupChoice choice : choices) {
+			if (!named.containsKey(choice.optionGroupId())) {
+				throw new DomainException(CatalogErrorCode.CATALOG_OPTION_GROUP_NOT_FOUND,
+						"No option group " + choice.optionGroupId());
+			}
+		}
+		List<Map<String, Object>> before = groupsSnapshot(product);
+		if (product.replaceOptionGroups(choices, named, this.clock.instant())) {
+			this.products.saveAndFlush(product);
+			record(client, "PRODUCT_OPTION_GROUPS_REPLACE", product, Map.of("groups", before),
+					Map.of("groups", groupsSnapshot(product)));
+		}
+		return view(product);
+	}
+
+	/**
+	 * Replaces the item overrides (Decision AC3). Changing an override price needs {@code CATALOG_PRICE_MANAGE}, which
+	 * the caller reports as {@code mayChangePrice}; it is checked before the business rules (as AB4).
+	 */
+	@Transactional
+	public ProductView replaceItemOverrides(UUID productId, List<ItemOverride> requested, boolean mayChangePrice,
+			ExpectedVersion expected, CatalogClient client) {
+		List<ProductOptionItemOverride> overrides = requested.stream()
+			.map(override -> new ProductOptionItemOverride(override.optionItemId(), override.extraPriceOverride(),
+					override.isHidden()))
+			.toList();
+		Product product = find(productId, expected);
+		if (!mayChangePrice && product.changesOverridePrices(overrides)) {
+			throw new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission CATALOG_PRICE_MANAGE");
+		}
+		List<Map<String, Object>> before = overridesSnapshot(product);
+		if (product.replaceItemOverrides(overrides, attachedGroups(product), this.clock.instant())) {
+			this.products.saveAndFlush(product);
+			record(client, "PRODUCT_OPTION_ITEM_OVERRIDES_REPLACE", product, Map.of("overrides", before),
+					Map.of("overrides", overridesSnapshot(product)));
+		}
+		return view(product);
+	}
+
+	/** One entry of {@code PUT …/option-groups}; {@code null} override = the group's own value (Decision AC2). */
+	public record GroupChoice(UUID optionGroupId, Integer minSelectOverride, Integer maxSelectOverride) {
+	}
+
+	/** One entry of {@code PUT …/option-item-overrides}; {@code null} price = library price (Decision AC3). */
+	public record ItemOverride(UUID optionItemId, Long extraPriceOverride, boolean isHidden) {
+	}
+
+	private Map<UUID, OptionGroup> attachedGroups(Product product) {
+		return groupsById(product.getOptionGroups().stream().map(ProductOptionGroupConfig::optionGroupId).toList());
+	}
+
+	private Map<UUID, OptionGroup> groupsById(Collection<UUID> ids) {
+		if (ids.isEmpty()) {
+			return Map.of();
+		}
+		Map<UUID, OptionGroup> byId = new LinkedHashMap<>();
+		this.optionGroups.findByIdIn(ids).forEach(group -> byId.put(group.getId(), group));
+		return byId;
+	}
+
+	private ProductView view(Product product) {
+		return ProductView.of(product, attachedGroups(product));
+	}
+
+	private static List<Map<String, Object>> groupsSnapshot(Product product) {
+		return product.getOptionGroups().stream().map(config -> {
+			Map<String, Object> entry = new LinkedHashMap<>();
+			entry.put("optionGroupId", config.optionGroupId());
+			entry.put("minSelectOverride", config.minSelectOverride());
+			entry.put("maxSelectOverride", config.maxSelectOverride());
+			return entry;
+		}).toList();
+	}
+
+	private static List<Map<String, Object>> overridesSnapshot(Product product) {
+		return product.getOptionItemOverrides()
+			.stream()
+			.sorted(Comparator.comparing(ProductOptionItemOverride::optionItemId))
+			.map(override -> {
+				Map<String, Object> entry = new LinkedHashMap<>();
+				entry.put("optionItemId", override.optionItemId());
+				entry.put("extraPriceOverride", override.extraPriceOverride());
+				entry.put("isHidden", override.isHidden());
+				return entry;
+			})
+			.toList();
+	}
+
+	private void record(CatalogClient client, String action, Product product, Map<String, ?> oldValue,
+			Map<String, ?> newValue) {
+		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, action, "PRODUCT", product.getId())
+			.withOldValue(oldValue)
+			.withNewValue(newValue)
+			.withClient(client.ipAddress(), client.userAgent()));
 	}
 
 	/** {@code ACTIVE → INACTIVE} (Decision AA1). */
@@ -148,14 +269,12 @@ public class ProductService {
 			.withOldValue(Map.of("status", previous.name()))
 			.withNewValue(Map.of("status", product.getStatus().name()))
 			.withClient(client.ipAddress(), client.userAgent()));
-		return ProductView.of(product);
+		return view(product);
 	}
 
 	@Transactional(readOnly = true)
 	public ProductView get(UUID productId) {
-		return ProductView.of(this.products.findById(productId)
-			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_PRODUCT_NOT_FOUND,
-					"No Product " + productId)));
+		return view(find(productId, null));
 	}
 
 	/**
