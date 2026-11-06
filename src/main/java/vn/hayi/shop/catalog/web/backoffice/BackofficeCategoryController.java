@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import tools.jackson.databind.JsonNode;
 import vn.hayi.shop.catalog.application.CategoryChanges;
+import vn.hayi.shop.catalog.application.CatalogClient;
 import vn.hayi.shop.catalog.application.CategoryService;
 import vn.hayi.shop.catalog.application.CategoryView;
 import vn.hayi.shop.catalog.application.NewCategory;
@@ -114,9 +115,9 @@ class BackofficeCategoryController implements CategoriesApi {
 		return new CategoryChanges(name, slug, description, parentId);
 	}
 
-	private CategoryService.Client client() {
+	private CatalogClient client() {
 		ClientInfo client = ClientInfo.from(this.request);
-		return new CategoryService.Client(ActorContext.staff(AuthenticatedSession.require().userId(), null),
+		return new CatalogClient(ActorContext.staff(AuthenticatedSession.require().userId(), null),
 				client.ipAddress(), client.userAgent());
 	}
 

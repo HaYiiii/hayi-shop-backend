@@ -74,7 +74,7 @@ public class ProductService {
 	 * and then sees the Product (Decision Z5, W5).
 	 */
 	@Transactional
-	public ProductView create(NewProduct request, CategoryService.Client client) {
+	public ProductView create(NewProduct request, CatalogClient client) {
 		Category category = (request.primaryCategoryId() != null) ? this.categories
 			.findByIdForUpdate(request.primaryCategoryId())
 			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_CATEGORY_NOT_FOUND,
@@ -110,7 +110,7 @@ public class ProductService {
 	 * this Product goes on sale. {@code expected} is {@code null} without {@code If-Match}.
 	 */
 	@Transactional
-	public ProductView activate(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+	public ProductView activate(UUID productId, ExpectedVersion expected, CatalogClient client) {
 		Product product = find(productId, expected);
 		Category category = (product.getPrimaryCategoryId() != null)
 				? this.categories.findByIdForUpdate(product.getPrimaryCategoryId()).orElse(null) : null;
@@ -119,14 +119,14 @@ public class ProductService {
 
 	/** {@code ACTIVE → INACTIVE} (Decision AA1). */
 	@Transactional
-	public ProductView deactivate(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+	public ProductView deactivate(UUID productId, ExpectedVersion expected, CatalogClient client) {
 		Product product = find(productId, expected);
 		return transitioned(product, product.deactivate(this.clock.instant()), "PRODUCT_DEACTIVATE", client);
 	}
 
 	/** {@code DRAFT | ACTIVE | INACTIVE → ARCHIVED}, final (Decision AA1). */
 	@Transactional
-	public ProductView archive(UUID productId, ExpectedVersion expected, CategoryService.Client client) {
+	public ProductView archive(UUID productId, ExpectedVersion expected, CatalogClient client) {
 		Product product = find(productId, expected);
 		return transitioned(product, product.archive(this.clock.instant()), "PRODUCT_ARCHIVE", client);
 	}
@@ -142,7 +142,7 @@ public class ProductService {
 	}
 
 	private ProductView transitioned(Product product, ProductStatus previous, String action,
-			CategoryService.Client client) {
+			CatalogClient client) {
 		this.products.saveAndFlush(product);
 		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, action, "PRODUCT", product.getId())
 			.withOldValue(Map.of("status", previous.name()))
