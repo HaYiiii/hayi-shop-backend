@@ -98,6 +98,8 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 			"CategoryPatch" to "tools.jackson.databind.JsonNode",
 			"OptionGroupPatch" to "tools.jackson.databind.JsonNode",
 			"OptionItemPatch" to "tools.jackson.databind.JsonNode",
+			"ProductPatch" to "tools.jackson.databind.JsonNode",
+			"ProductVariantPatch" to "tools.jackson.databind.JsonNode",
 		)
 	}
 }

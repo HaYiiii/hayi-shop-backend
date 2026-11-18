@@ -62,6 +62,29 @@ public class ProductVariant {
 		return created;
 	}
 
+	/** Name and price, recording what changed in {@code diff} (Decision AE3). */
+	void edit(String name, long basePrice, FieldDiff diff, Instant now) {
+		String nextName = diff.track("name", this.name, name);
+		long nextPrice = diff.track("basePrice", this.basePrice, basePrice);
+		if (!nextName.equals(this.name) || nextPrice != this.basePrice) {
+			this.name = nextName;
+			this.basePrice = nextPrice;
+			this.updatedAt = now;
+		}
+	}
+
+	void setDefault(boolean isDefault, Instant now) {
+		this.isDefault = isDefault;
+		this.updatedAt = now;
+	}
+
+	/** Final; an archived Variant is never the default (Decision AE4). */
+	void archive(Instant now) {
+		this.status = VariantStatus.ARCHIVED;
+		this.isDefault = false;
+		this.updatedAt = now;
+	}
+
 	public UUID getId() {
 		return this.id;
 	}
