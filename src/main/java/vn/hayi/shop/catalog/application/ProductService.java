@@ -127,6 +127,7 @@ public class ProductService {
 			Change<UUID> primaryCategoryId, Change<String> shortDescription, Change<String> description,
 			ExpectedVersion expected, CatalogClient client) {
 		Product product = find(productId, expected);
+		product.requireChangeable();
 		UUID categoryId = primaryCategoryId.applyTo(product.getPrimaryCategoryId());
 		Category category = null;
 		if (categoryId != null && !categoryId.equals(product.getPrimaryCategoryId())) {
@@ -153,10 +154,12 @@ public class ProductService {
 	public ProductView addVariant(UUID productId, NewProduct.Variant request, ExpectedVersion expected,
 			CatalogClient client) {
 		Product product = find(productId, expected);
+		product.requireChangeable();
 		String sku = normalizeCode(request.sku());
 		if (!this.products.findTakenSkus(List.of(sku)).isEmpty()) {
 			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, sku);
 		}
+		UUID previousDefault = product.defaultVariant().map(ProductVariant::getId).orElse(null);
 		ProductVariant added = product.addVariant(
 				new NewVariant(sku, request.name(), request.basePrice(), request.isDefault()), this.clock.instant(),
 				() -> this.products.saveAndFlush(product));
@@ -167,7 +170,14 @@ public class ProductService {
 		values.put("name", added.getName());
 		values.put("basePrice", added.getBasePrice());
 		values.put("isDefault", added.isDefault());
-		record(client, "PRODUCT_VARIANT_CREATE", product, null, values);
+		Map<String, Object> oldValue = null;
+		if (added.isDefault()) {
+			// The default moved (AE5): record the old one, null when no Variant was left.
+			oldValue = new LinkedHashMap<>();
+			oldValue.put("defaultVariantId", previousDefault);
+			values.put("defaultVariantId", added.getId());
+		}
+		record(client, "PRODUCT_VARIANT_CREATE", product, oldValue, values);
 		return view(product);
 	}
 
@@ -180,6 +190,7 @@ public class ProductService {
 	public ProductView updateVariant(UUID productId, UUID variantId, Change<String> name, Change<Long> basePrice,
 			boolean makeDefault, boolean mayChangePrice, ExpectedVersion expected, CatalogClient client) {
 		Product product = find(productId, expected);
+		product.requireChangeable();
 		ProductVariant variant = product.findVariant(variantId)
 			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_VARIANT_NOT_FOUND,
 					"No Variant " + variantId + " in Product " + productId));
@@ -202,6 +213,7 @@ public class ProductService {
 	public ProductView archiveVariant(UUID productId, UUID variantId, ExpectedVersion expected,
 			CatalogClient client) {
 		Product product = find(productId, expected);
+		product.requireChangeable();
 		String before = product.findVariant(variantId).map(variant -> variant.getStatus().name()).orElse(null);
 		ProductVariant archived = product.archiveVariant(variantId, this.clock.instant());
 		save(product);

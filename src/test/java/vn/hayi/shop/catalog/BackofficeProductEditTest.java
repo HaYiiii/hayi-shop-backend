@@ -177,6 +177,12 @@ class BackofficeProductEditTest {
 		assertProblem(patchVariant(product.id, product.defaultVariant, "\"v1\"", "{\"name\": \"X\"}"), 409,
 				"CATALOG_PRODUCT_INVALID_TRANSITION");
 		assertProblem(archiveVariant(product.id, product.defaultVariant), 409, "CATALOG_PRODUCT_INVALID_TRANSITION");
+		assertProblem(patchProduct(product.id, "\"v1\"", "{\"primaryCategoryId\": \"" + UUID.randomUUID() + "\"}"),
+				409, "CATALOG_PRODUCT_INVALID_TRANSITION");
+		assertProblem(addVariant(product.id, "{\"sku\": \"" + product.sku + "\", \"name\": \"L\", \"basePrice\": 1}"),
+				409, "CATALOG_PRODUCT_INVALID_TRANSITION");
+		assertProblem(archiveVariant(product.id, UUID.randomUUID().toString()), 409,
+				"CATALOG_PRODUCT_INVALID_TRANSITION");
 	}
 
 	// --- POST /products/{id}/variants (AE2) ---------------------------------------------------------------------
@@ -210,8 +216,15 @@ class BackofficeProductEditTest {
 		MockHttpServletResponse added = addVariant(product.id, variant("L", 55000, true));
 
 		assertThat(added.getStatus()).as(added.getContentAsString()).isEqualTo(201);
+		assertThat(added.getHeader("ETag")).as("one bump despite writing the old default first").isEqualTo("\"v1\"");
+		List<String> ids = JsonPath.read(detail(product.id).getContentAsString(), "$.variants[*].variantId");
 		assertThat(JsonPath.<List<Boolean>>read(detail(product.id).getContentAsString(), "$.variants[*].isDefault"))
 			.containsExactly(false, true);
+		Map<String, Object> audit = audits(product.id, "PRODUCT_VARIANT_CREATE").getFirst();
+		assertThat(JsonPath.<String>read((String) audit.get("old_value"), "$.defaultVariantId"))
+			.isEqualTo(product.defaultVariant);
+		assertThat(JsonPath.<String>read((String) audit.get("new_value"), "$.defaultVariantId"))
+			.isEqualTo(ids.getLast());
 	}
 
 	@Test
@@ -382,8 +395,21 @@ class BackofficeProductEditTest {
 			.containsExactly("ACTIVE", "ARCHIVED");
 		List<Map<String, Object>> audits = audits(product.id, "PRODUCT_VARIANT_ARCHIVE");
 		assertThat(audits).hasSize(1);
-		assertThat(JsonPath.<String>read((String) audits.getFirst().get("new_value"), "$.status"))
-			.isEqualTo("ARCHIVED");
+		Map<String, Object> oldValue = JsonPath.read((String) audits.getFirst().get("old_value"), "$");
+		Map<String, Object> newValue = JsonPath.read((String) audits.getFirst().get("new_value"), "$");
+		assertThat(oldValue).containsEntry("variantId", large).containsEntry("status", "ACTIVE");
+		assertThat(newValue).containsEntry("variantId", large).containsEntry("status", "ARCHIVED");
+	}
+
+	@Test
+	void archivingAVariantWithAStaleIfMatchConflicts() throws Exception {
+		Product product = product(null);
+		assertThat(addVariant(product.id, variant("L", 55000, false)).getStatus()).isEqualTo(201);
+		String large = JsonPath.<List<String>>read(detail(product.id).getContentAsString(), "$.variants[*].variantId")
+			.getLast();
+
+		assertProblem(this.auth.perform(post(PRODUCTS + "/" + product.id + "/variants/" + large + "/archive")
+			.header("If-Match", "\"v0\""), this.admin, true), 412, "VERSION_CONFLICT");
 	}
 
 	@Test

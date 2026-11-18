@@ -473,7 +473,16 @@ public class Product {
 		return this.variants.stream().filter(variant -> variant.getId().equals(variantId)).findFirst();
 	}
 
-	private Optional<ProductVariant> defaultVariant() {
+	/**
+	 * Refuses any change to an archived Product (Decision AE1, AC1); callers check it before looking anything else
+	 * up, so an archived Product answers {@code 409} whatever else the request names.
+	 */
+	public void requireChangeable() {
+		requireNotArchived("change");
+	}
+
+	/** The non-archived default Variant, if any Variant is left. */
+	public Optional<ProductVariant> defaultVariant() {
 		return liveVariants().stream().filter(ProductVariant::isDefault).findFirst();
 	}
 
