@@ -1067,6 +1067,147 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Products]
+      operationId: updateProduct
+      summary: Edit a Product's name, slug, primary Category or descriptions
+      description: |
+        `CATALOG_MANAGE`. JSON Merge Patch on `name`, `slug`, `primaryCategoryId`, `shortDescription`, `description`
+        (`null` clears the last three); any other key → `400` (Decision AE1). Slug taken → `409 CATALOG_SLUG_TAKEN`. A new
+        primary Category must exist (`404`) and be `ACTIVE` (`409 CATALOG_CATEGORY_ARCHIVED`); clearing it on an
+        `ACTIVE` Product → `422 PRODUCT_ACTIVATION_INVALID` (AE4). Archived Product →
+        `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Requires `If-Match` (missing → `428`, stale → `412`). Changed fields
+        are audited; a patch that changes nothing keeps the version. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/ProductPatch' }
+      responses:
+        '200':
+          description: The Product after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductEditConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ProductActivationInvalid' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /products/{productId}/variants:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Products]
+      operationId: addProductVariant
+      summary: Add a Variant to a Product, last in its order
+      description: |
+        `CATALOG_MANAGE` and `CATALOG_PRICE_MANAGE` (Decision AE2). The Variant is `ACTIVE`; `isDefault: true` moves the
+        default to it, and it is the default anyway when the Product has no other non-archived Variant. At most 20
+        non-archived Variants → `409 CATALOG_VARIANT_LIMIT_REACHED`; SKU taken → `409 CATALOG_SKU_TAKEN`; negative price
+        → `422 CATALOG_PRICE_NEGATIVE`. Archived Product → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Bumps the Product
+        version. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductVariantInput' }
+      responses:
+        '201':
+          description: The Product with the new Variant.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VariantConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/VariantRuleViolated' }
+  /products/{productId}/variants/{variantId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+      - $ref: '#/components/parameters/VariantId'
+    patch:
+      tags: [Products]
+      operationId: updateProductVariant
+      summary: Edit a Variant's name or base price, or make it the default
+      description: |
+        `CATALOG_MANAGE`, plus `CATALOG_PRICE_MANAGE` when `basePrice` really changes (checked first, Decision AE3).
+        JSON Merge Patch on `name`, `basePrice` and `isDefault` (only `true`, which moves the default here); any other key
+        → `400`. Unknown Variant → `404 CATALOG_VARIANT_NOT_FOUND`; archived → `409 CATALOG_VARIANT_ARCHIVED`; negative
+        price → `422 CATALOG_PRICE_NEGATIVE`. Archived Product → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Requires
+        `If-Match` of the Product (missing → `428`, stale → `412`); bumps the Product version unless nothing changes.
+        Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/ProductVariantPatch' }
+      responses:
+        '200':
+          description: The Product after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VariantConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/VariantRuleViolated' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /products/{productId}/variants/{variantId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+      - $ref: '#/components/parameters/VariantId'
+    post:
+      tags: [Products]
+      operationId: archiveProductVariant
+      summary: Archive a Variant for good
+      description: |
+        `CATALOG_MANAGE`. Final (Decision AE4). The default Variant while other non-archived Variants exist →
+        `409 CATALOG_VARIANT_IS_DEFAULT` (move the default first); already archived → `409 CATALOG_VARIANT_ARCHIVED`;
+        the last Variant of an `ACTIVE` Product → `422 PRODUCT_ACTIVATION_INVALID` (`NO_ACTIVE_VARIANT`). Archived
+        Product → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Bumps the Product version. Optional `If-Match`. Audited.
+        Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VariantConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ProductActivationInvalid' }
   /products/{productId}/activate:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -1507,6 +1648,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    VariantId:
+      name: variantId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     OptionGroupId:
       name: optionGroupId
       in: path
@@ -1669,6 +1815,28 @@ components:
           minItems: 1
           maxItems: 20
           items: { $ref: '#/components/schemas/ProductVariantInput' }
+    ProductPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        JSON Merge Patch of a Product (Decision AE1). Missing key = unchanged; `null` clears `primaryCategoryId`,
+        `shortDescription`, `description`; `name` and `slug` cannot be `null` or blank.
+      properties:
+        name: { type: string, maxLength: 160 }
+        slug: { type: string, maxLength: 160, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+        primaryCategoryId: { type: [string, 'null'], format: uuid }
+        shortDescription: { type: [string, 'null'], maxLength: 500 }
+        description: { type: [string, 'null'], maxLength: 10000 }
+    ProductVariantPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        JSON Merge Patch of a Variant (Decision AE3); every key is required when sent (no `null`). `isDefault` accepts
+        only `true`.
+      properties:
+        name: { type: string, maxLength: 128 }
+        basePrice: { $ref: '#/components/schemas/PriceInput' }
+        isDefault: { type: boolean, enum: [true] }
     ProductVariant:
       type: object
       required: [variantId, sku, name, basePrice, isDefault, status, sortOrder]
@@ -2374,8 +2542,8 @@ components:
     NotFound:
       description: |
         `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
-        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_OPTION_GROUP_NOT_FOUND`,
-        `CATALOG_OPTION_ITEM_NOT_FOUND`
+        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_VARIANT_NOT_FOUND`,
+        `CATALOG_OPTION_GROUP_NOT_FOUND`, `CATALOG_OPTION_ITEM_NOT_FOUND`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2416,6 +2584,23 @@ components:
           schema: { $ref: '#/components/schemas/ProductActivationProblem' }
     ProductConflict:
       description: '`CATALOG_CODE_TAKEN`, `CATALOG_SKU_TAKEN`, `CATALOG_SLUG_TAKEN` or `CATALOG_CATEGORY_ARCHIVED` (Decision Z)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ProductEditConflict:
+      description: '`CATALOG_SLUG_TAKEN`, `CATALOG_CATEGORY_ARCHIVED` or `CATALOG_PRODUCT_INVALID_TRANSITION` (Decision AE1)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    VariantConflict:
+      description: |
+        `CATALOG_SKU_TAKEN`, `CATALOG_VARIANT_ARCHIVED`, `CATALOG_VARIANT_IS_DEFAULT`, `CATALOG_VARIANT_LIMIT_REACHED` or
+        `CATALOG_PRODUCT_INVALID_TRANSITION` (Decision AE)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    VariantRuleViolated:
+      description: '`CATALOG_PRICE_NEGATIVE` with `errors[]` (Decision AE2, AE3)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

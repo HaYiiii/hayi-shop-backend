@@ -2,13 +2,14 @@ package vn.hayi.shop.catalog.domain;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
@@ -43,6 +44,9 @@ import vn.hayi.shop.shared.id.UuidV7;
 @Entity
 @Table(name = "cat_product")
 public class Product {
+
+	/** Non-archived Variants a Product may have (Decision Z1, AE2). */
+	public static final int MAX_LIVE_VARIANTS = 20;
 
 	@Id
 	private UUID id;
@@ -337,7 +341,165 @@ public class Product {
 	}
 
 	private void requireNotArchived() {
-		requireStatus("configure the options of", ProductStatus.DRAFT, ProductStatus.ACTIVE, ProductStatus.INACTIVE);
+		requireNotArchived("configure the options of");
+	}
+
+	private void requireNotArchived(String action) {
+		requireStatus(action, ProductStatus.DRAFT, ProductStatus.ACTIVE, ProductStatus.INACTIVE);
+	}
+
+	/**
+	 * Edits the descriptive fields (Decision AE1) and returns what changed; an edit that changes nothing leaves the
+	 * Product untouched.
+	 * @param newPrimaryCategory the Category {@code primaryCategoryId} names, locked by the caller, when that differs
+	 * from the current one; otherwise ignored
+	 * @throws DomainException {@code CATALOG_PRODUCT_INVALID_TRANSITION} when archived, {@code CATALOG_CATEGORY_ARCHIVED}
+	 * @throws ProductActivationInvalidException when an {@code ACTIVE} Product would lose its primary Category (AE4)
+	 */
+	public FieldDiff edit(String name, String slug, UUID primaryCategoryId, Category newPrimaryCategory,
+			String shortDescription, String description, Instant now) {
+		requireNotArchived("edit");
+		if (primaryCategoryId != null && !primaryCategoryId.equals(this.primaryCategoryId)) {
+			newPrimaryCategory.requireActive();
+		}
+		if (primaryCategoryId == null && this.status == ProductStatus.ACTIVE) {
+			throw new ProductActivationInvalidException(this.id,
+					List.of(ProductActivationInvalidException.Issue.of(ActivationIssue.PRIMARY_CATEGORY_MISSING)));
+		}
+		FieldDiff diff = new FieldDiff();
+		this.name = diff.track("name", this.name, name);
+		this.slug = diff.track("slug", this.slug, slug);
+		this.primaryCategoryId = diff.track("primaryCategoryId", this.primaryCategoryId, primaryCategoryId);
+		this.shortDescription = diff.track("shortDescription", this.shortDescription, shortDescription);
+		this.description = diff.track("description", this.description, description);
+		if (!diff.isEmpty()) {
+			this.updatedAt = now;
+		}
+		return diff;
+	}
+
+	/**
+	 * Adds an {@code ACTIVE} Variant last (Decision AE2). It becomes the default when asked, or when no other
+	 * non-archived Variant is left.
+	 * @param writeReleasedDefault writes the Product once the previous default has let go of the flag. The database
+	 * allows one non-archived default per Product ({@code default_marker}), checked per statement, and inserts run
+	 * before updates in one flush; so the old default must be written first.
+	 * @throws DomainException {@code CATALOG_PRODUCT_INVALID_TRANSITION} when archived,
+	 * {@code CATALOG_VARIANT_LIMIT_REACHED}; {@code CATALOG_PRICE_NEGATIVE} with {@code errors[]}
+	 */
+	public ProductVariant addVariant(NewVariant variant, Instant now, Runnable writeReleasedDefault) {
+		requireNotArchived("add a Variant to");
+		requireNotNegative(variant.basePrice());
+		List<ProductVariant> live = liveVariants();
+		if (live.size() >= MAX_LIVE_VARIANTS) {
+			throw new DomainException(CatalogErrorCode.CATALOG_VARIANT_LIMIT_REACHED,
+					"Product " + this.id + " already has " + MAX_LIVE_VARIANTS + " Variants");
+		}
+		boolean isDefault = variant.isDefault() || live.isEmpty();
+		this.updatedAt = now;
+		if (isDefault) {
+			releaseDefault(now, writeReleasedDefault);
+		}
+		int sortOrder = this.variants.stream().mapToInt(ProductVariant::getSortOrder).max().orElse(-1) + 1;
+		ProductVariant added = ProductVariant.create(
+				new NewVariant(variant.sku(), variant.name(), variant.basePrice(), isDefault), sortOrder, now);
+		this.variants.add(added);
+		return added;
+	}
+
+	/**
+	 * Edits a Variant's name and base price, and makes it the default when {@code makeDefault} (Decision AE3).
+	 * Returns what changed, with {@code defaultVariantId} when the default moved.
+	 * @param writeReleasedDefault as for {@link #addVariant}
+	 * @throws DomainException {@code CATALOG_VARIANT_NOT_FOUND}, {@code CATALOG_VARIANT_ARCHIVED},
+	 * {@code CATALOG_PRODUCT_INVALID_TRANSITION}; {@code CATALOG_PRICE_NEGATIVE} with {@code errors[]}
+	 */
+	public FieldDiff editVariant(UUID variantId, String name, long basePrice, boolean makeDefault, Instant now,
+			Runnable writeReleasedDefault) {
+		requireNotArchived("edit a Variant of");
+		ProductVariant variant = liveVariant(variantId);
+		requireNotNegative(basePrice);
+		FieldDiff diff = new FieldDiff();
+		variant.edit(name, basePrice, diff, now);
+		if (makeDefault && !variant.isDefault()) {
+			UUID previous = defaultVariant().map(ProductVariant::getId).orElse(null);
+			diff.track("isDefault", false, true);
+			diff.track("defaultVariantId", previous, variantId);
+			this.updatedAt = now;
+			releaseDefault(now, writeReleasedDefault);
+			variant.setDefault(true, now);
+		}
+		if (!diff.isEmpty()) {
+			this.updatedAt = now;
+		}
+		return diff;
+	}
+
+	/**
+	 * Archives a Variant for good (Decision AE4). The default may go only as the last non-archived Variant, and an
+	 * {@code ACTIVE} Product keeps an {@code ACTIVE} Variant.
+	 * @throws DomainException {@code CATALOG_VARIANT_IS_DEFAULT}, {@code CATALOG_VARIANT_NOT_FOUND},
+	 * {@code CATALOG_VARIANT_ARCHIVED}, {@code CATALOG_PRODUCT_INVALID_TRANSITION}
+	 * @throws ProductActivationInvalidException for the last {@code ACTIVE} Variant of an {@code ACTIVE} Product
+	 */
+	public ProductVariant archiveVariant(UUID variantId, Instant now) {
+		requireNotArchived("archive a Variant of");
+		ProductVariant variant = liveVariant(variantId);
+		if (variant.isDefault() && liveVariants().size() > 1) {
+			throw new DomainException(CatalogErrorCode.CATALOG_VARIANT_IS_DEFAULT,
+					"Variant " + variantId + " is the default of Product " + this.id);
+		}
+		boolean lastActive = this.variants.stream()
+			.noneMatch(other -> other != variant && other.getStatus() == VariantStatus.ACTIVE);
+		if (lastActive && this.status == ProductStatus.ACTIVE) {
+			throw new ProductActivationInvalidException(this.id,
+					List.of(ProductActivationInvalidException.Issue.of(ActivationIssue.NO_ACTIVE_VARIANT)));
+		}
+		variant.archive(now);
+		this.updatedAt = now;
+		return variant;
+	}
+
+	private void releaseDefault(Instant now, Runnable writeReleasedDefault) {
+		Optional<ProductVariant> current = defaultVariant();
+		if (current.isPresent()) {
+			current.get().setDefault(false, now);
+			writeReleasedDefault.run();
+		}
+	}
+
+	/** The Variant with this id, archived or not. */
+	public Optional<ProductVariant> findVariant(UUID variantId) {
+		return this.variants.stream().filter(variant -> variant.getId().equals(variantId)).findFirst();
+	}
+
+	/**
+	 * Refuses any change to an archived Product (Decision AE1, AC1); callers check it before looking anything else
+	 * up, so an archived Product answers {@code 409} whatever else the request names.
+	 */
+	public void requireChangeable() {
+		requireNotArchived("change");
+	}
+
+	/** The non-archived default Variant, if any Variant is left. */
+	public Optional<ProductVariant> defaultVariant() {
+		return liveVariants().stream().filter(ProductVariant::isDefault).findFirst();
+	}
+
+	private ProductVariant liveVariant(UUID variantId) {
+		ProductVariant variant = findVariant(variantId).orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_VARIANT_NOT_FOUND,
+					"No Variant " + variantId + " in Product " + this.id));
+		if (variant.getStatus() == VariantStatus.ARCHIVED) {
+			throw new DomainException(CatalogErrorCode.CATALOG_VARIANT_ARCHIVED, "Variant " + variantId + " is archived");
+		}
+		return variant;
+	}
+
+	private static void requireNotNegative(long basePrice) {
+		if (basePrice < 0) {
+			throw new RuleViolationsException(CatalogErrorCode.CATALOG_PRICE_NEGATIVE,
+					List.of(new RuleViolationsException.Violation("basePrice", "MIN")));
+		}
 	}
 
 	/** {@code ACTIVE → INACTIVE} (Decision AA1). Returns the previous status. */

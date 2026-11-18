@@ -26,6 +26,7 @@ import vn.hayi.shop.audit.api.AuditSource;
 import vn.hayi.shop.catalog.domain.CatalogErrorCode;
 import vn.hayi.shop.catalog.domain.Category;
 import vn.hayi.shop.catalog.domain.CategoryRepository;
+import vn.hayi.shop.catalog.domain.FieldDiff;
 import vn.hayi.shop.catalog.domain.NewVariant;
 import vn.hayi.shop.catalog.domain.OptionGroup;
 import vn.hayi.shop.catalog.domain.OptionGroupChoice;
@@ -40,6 +41,7 @@ import vn.hayi.shop.catalog.domain.ProductVariant;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.patch.Change;
 
 /**
  * Creates and reads brand-level Products (Catalog §5.2, API 08 §1.3, Decision Z); every change is audited in the
@@ -114,6 +116,117 @@ public class ProductService {
 			.withNewValue(snapshot(product))
 			.withClient(client.ipAddress(), client.userAgent()));
 		return view(product);
+	}
+
+	/**
+	 * Merge Patch of the descriptive fields at {@code expected} version (Decision AE1). A new primary Category is
+	 * locked until commit, as on create (Z5); a patch that changes nothing keeps the version and is not audited.
+	 */
+	@Transactional
+	public ProductView update(UUID productId, Change<String> name, Change<String> slug,
+			Change<UUID> primaryCategoryId, Change<String> shortDescription, Change<String> description,
+			ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		UUID categoryId = primaryCategoryId.applyTo(product.getPrimaryCategoryId());
+		Category category = null;
+		if (categoryId != null && !categoryId.equals(product.getPrimaryCategoryId())) {
+			category = this.categories.findByIdForUpdate(categoryId)
+				.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_CATEGORY_NOT_FOUND,
+						"No Category " + categoryId));
+		}
+		String newSlug = slug.applyTo(product.getSlug());
+		if (!newSlug.equals(product.getSlug()) && this.products.existsBySlug(newSlug)) {
+			throw taken(CatalogErrorCode.CATALOG_SLUG_TAKEN, newSlug);
+		}
+		FieldDiff diff = product.edit(name.applyTo(product.getName()), newSlug, categoryId, category,
+				shortDescription.applyTo(product.getShortDescription()),
+				description.applyTo(product.getDescription()), this.clock.instant());
+		if (!diff.isEmpty()) {
+			save(product);
+			record(client, "PRODUCT_UPDATE", product, diff.oldValues(), diff.newValues());
+		}
+		return view(product);
+	}
+
+	/** Adds a Variant (Decision AE2); the caller has checked both permissions. */
+	@Transactional
+	public ProductView addVariant(UUID productId, NewProduct.Variant request, ExpectedVersion expected,
+			CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		String sku = normalizeCode(request.sku());
+		if (!this.products.findTakenSkus(List.of(sku)).isEmpty()) {
+			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, sku);
+		}
+		UUID previousDefault = product.defaultVariant().map(ProductVariant::getId).orElse(null);
+		ProductVariant added = product.addVariant(
+				new NewVariant(sku, request.name(), request.basePrice(), request.isDefault()), this.clock.instant(),
+				() -> this.products.saveAndFlush(product));
+		save(product);
+		Map<String, Object> values = new LinkedHashMap<>();
+		values.put("variantId", added.getId());
+		values.put("sku", added.getSku());
+		values.put("name", added.getName());
+		values.put("basePrice", added.getBasePrice());
+		values.put("isDefault", added.isDefault());
+		Map<String, Object> oldValue = null;
+		if (added.isDefault()) {
+			// The default moved (AE5): record the old one, null when no Variant was left.
+			oldValue = new LinkedHashMap<>();
+			oldValue.put("defaultVariantId", previousDefault);
+			values.put("defaultVariantId", added.getId());
+		}
+		record(client, "PRODUCT_VARIANT_CREATE", product, oldValue, values);
+		return view(product);
+	}
+
+	/**
+	 * Merge Patch of one Variant at the Product's {@code expected} version (Decision AE3). A real change of its base
+	 * price needs {@code CATALOG_PRICE_MANAGE}, which the caller reports as {@code mayChangePrice}; it is checked
+	 * before the business rules (as AB4).
+	 */
+	@Transactional
+	public ProductView updateVariant(UUID productId, UUID variantId, Change<String> name, Change<Long> basePrice,
+			boolean makeDefault, boolean mayChangePrice, ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		ProductVariant variant = product.findVariant(variantId)
+			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_VARIANT_NOT_FOUND,
+					"No Variant " + variantId + " in Product " + productId));
+		long newPrice = basePrice.applyTo(variant.getBasePrice());
+		if (newPrice != variant.getBasePrice() && !mayChangePrice) {
+			throw new DomainException(CommonErrorCode.PERMISSION_DENIED, "Missing permission CATALOG_PRICE_MANAGE");
+		}
+		FieldDiff diff = product.editVariant(variantId, name.applyTo(variant.getName()), newPrice, makeDefault,
+				this.clock.instant(), () -> this.products.saveAndFlush(product));
+		if (!diff.isEmpty()) {
+			save(product);
+			record(client, "PRODUCT_VARIANT_UPDATE", product, withVariant(variantId, diff.oldValues()),
+					withVariant(variantId, diff.newValues()));
+		}
+		return view(product);
+	}
+
+	/** Archives a Variant for good (Decision AE4). */
+	@Transactional
+	public ProductView archiveVariant(UUID productId, UUID variantId, ExpectedVersion expected,
+			CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		String before = product.findVariant(variantId).map(variant -> variant.getStatus().name()).orElse(null);
+		ProductVariant archived = product.archiveVariant(variantId, this.clock.instant());
+		save(product);
+		record(client, "PRODUCT_VARIANT_ARCHIVE", product, withVariant(variantId, Map.of("status", before)),
+				withVariant(variantId, Map.of("status", archived.getStatus().name())));
+		return view(product);
+	}
+
+	private static Map<String, Object> withVariant(UUID variantId, Map<String, Object> values) {
+		Map<String, Object> entry = new LinkedHashMap<>();
+		entry.put("variantId", variantId);
+		entry.putAll(values);
+		return entry;
 	}
 
 	/**

@@ -137,6 +137,14 @@ class BackofficeProductOptionsTest {
 		assertThat(JsonPath.<List<Boolean>>read(body, "$.optionItemOverrides[*].isHidden"))
 			.containsExactlyInAnyOrder(false, true);
 		assertThat(audits(product, "PRODUCT_OPTION_ITEM_OVERRIDES_REPLACE")).hasSize(1);
+
+		MockHttpServletResponse same = putOverrides(product, "\"v2\"", """
+				{"overrides": [{"optionItemId": "%s", "isHidden": true},
+				               {"optionItemId": "%s", "extraPriceOverride": 8000, "isHidden": false}]}
+				""".formatted(milk.items.get(1), milk.items.get(0)));
+		assertThat(same.getStatus()).as(same.getContentAsString()).isEqualTo(200);
+		assertThat(same.getHeader("ETag")).as("same list in another order: no change").isEqualTo("\"v2\"");
+		assertThat(audits(product, "PRODUCT_OPTION_ITEM_OVERRIDES_REPLACE")).hasSize(1);
 	}
 
 	@Test

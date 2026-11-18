@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -28,7 +29,9 @@ import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.PermissionEvaluator;
 import vn.hayi.shop.platform.security.RequiresPermission;
+import tools.jackson.databind.JsonNode;
 import vn.hayi.shop.platform.web.InvalidFieldsException;
+import vn.hayi.shop.platform.web.MergePatch;
 import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.backoffice.api.ProductsApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductCreateRequestDto;
@@ -47,12 +50,16 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.ProductVariantDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductVariantInputDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.VariantStatusDto;
 import vn.hayi.shop.shared.actor.ActorContext;
+import vn.hayi.shop.shared.patch.Change;
 
 /** Backoffice Product endpoints (API 08 §1.3, Decision Z). Brand-level: a permission at any scope is enough (M1). */
 @RestController
 class BackofficeProductController implements ProductsApi {
 
 	private static final String PRODUCTS = "/api/backoffice/v1/products/";
+
+	/** Kebab-case slug (Decision Z2). */
+	private static final Pattern SLUG = Pattern.compile("^[a-z0-9]+(-[a-z0-9]+)*$");
 
 	private final ProductService products;
 
@@ -78,6 +85,68 @@ class BackofficeProductController implements ProductsApi {
 		return ResponseEntity.created(URI.create(PRODUCTS + product.productId()))
 			.eTag(VersionTags.of(product.version()))
 			.body(toDto(product));
+	}
+
+	/** Field limits follow Decision Z2 and the {@code ProductPatch} schema; anything else is refused (AE1). */
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> updateProduct(UUID productId, JsonNode body, String ifMatch,
+			String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		MergePatch patch = MergePatch.of(body);
+		Change<String> name = patch.requiredText("name", 160);
+		Change<String> slug = patch.requiredText("slug", 160, SLUG);
+		Change<UUID> primaryCategoryId = patch.optionalUuid("primaryCategoryId");
+		Change<String> shortDescription = patch.optionalText("shortDescription", 500);
+		Change<String> description = patch.optionalText("description", 10000);
+		patch.validate();
+		return withETag(this.products.update(productId, name, slug, primaryCategoryId, shortDescription, description,
+				expected, client()));
+	}
+
+	/** Adding a Variant sets a price, so it needs both permissions (Decision AE2, like Z4). */
+	@Override
+	@RequiresPermission({ Permission.CATALOG_MANAGE, Permission.CATALOG_PRICE_MANAGE })
+	public ResponseEntity<ProductDto> addProductVariant(UUID productId, ProductVariantInputDto body, String ifMatch,
+			String xCsrfToken) {
+		ProductView product = this.products.addVariant(productId,
+				new NewProduct.Variant(body.getSku(), body.getName(), body.getBasePrice(),
+						Boolean.TRUE.equals(body.getIsDefault())),
+				VersionTags.optional(ifMatch), client());
+		return ResponseEntity.status(201).eTag(VersionTags.of(product.version())).body(toDto(product));
+	}
+
+	/**
+	 * {@code isDefault} only takes {@code true}: the default moves here, it cannot be left without one (AE3). A base
+	 * price change needs {@code CATALOG_PRICE_MANAGE} on top.
+	 */
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> updateProductVariant(UUID productId, UUID variantId, JsonNode body,
+			String ifMatch, String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		MergePatch patch = MergePatch.of(body);
+		Change<String> name = patch.requiredText("name", 128);
+		Change<Long> basePrice = patch.requiredLong("basePrice");
+		Change<Boolean> isDefault = patch.requiredBoolean("isDefault");
+		patch.validate();
+		if (Boolean.FALSE.equals(isDefault.applyTo(null))) {
+			throw new InvalidFieldsException(List.of(new InvalidFieldsException.Violation("isDefault", "ONLY_TRUE")));
+		}
+		return withETag(this.products.updateVariant(productId, variantId, name, basePrice,
+				Boolean.TRUE.equals(isDefault.applyTo(null)), hasPricePermission(), expected, client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> archiveProductVariant(UUID productId, UUID variantId, String ifMatch,
+			String xCsrfToken) {
+		return withETag(this.products.archiveVariant(productId, variantId, VersionTags.optional(ifMatch), client()));
+	}
+
+	private boolean hasPricePermission() {
+		return this.permissions.evaluate(AuthenticatedSession.require().userId(), Permission.CATALOG_PRICE_MANAGE,
+				Optional.empty()) == AccessDecision.GRANTED;
 	}
 
 	@Override
@@ -118,9 +187,8 @@ class BackofficeProductController implements ProductsApi {
 			overrides.add(new ProductService.ItemOverride(override.getOptionItemId(),
 					override.getExtraPriceOverride(), override.getIsHidden()));
 		}
-		boolean mayChangePrice = this.permissions.evaluate(AuthenticatedSession.require().userId(),
-				Permission.CATALOG_PRICE_MANAGE, Optional.empty()) == AccessDecision.GRANTED;
-		return withETag(this.products.replaceItemOverrides(productId, overrides, mayChangePrice, expected, client()));
+		return withETag(
+				this.products.replaceItemOverrides(productId, overrides, hasPricePermission(), expected, client()));
 	}
 
 	private static InvalidFieldsException duplicate(String field) {
