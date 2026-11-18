@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 
 public interface OptionGroupRepository extends Repository<OptionGroup, UUID> {
@@ -17,6 +18,10 @@ public interface OptionGroupRepository extends Repository<OptionGroup, UUID> {
 	boolean existsByCode(String code);
 
 	List<OptionGroup> findByIdIn(Collection<UUID> ids);
+
+	/** The group holding this item, archived or not. */
+	@Query("select g from OptionGroup g join g.items i where i.id = :itemId")
+	Optional<OptionGroup> findByItemId(UUID itemId);
 
 	List<OptionGroup> findAllByOrderByCodeAsc();
 

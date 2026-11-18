@@ -405,7 +405,7 @@ public class ProductService {
 	}
 
 	/** {@code %…%} with {@code LIKE} wildcards escaped by {@code !}, or {@code null} for no text filter. */
-	private static String pattern(String query) {
+	static String pattern(String query) {
 		if (query == null || query.isBlank()) {
 			return null;
 		}
