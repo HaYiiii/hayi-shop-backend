@@ -423,7 +423,8 @@ public class ProductService {
 
 	/**
 	 * @param skuFields the request field of each new SKU (as stored), so a SKU a concurrent request took after the
-	 * checks is still reported on its field (Decision Z2, AE2)
+	 * checks is still reported on its field (Decision Z2, AE2). MySQL stops at the first duplicate, so this path
+	 * reports only that one SKU; the pre-check reports all of them.
 	 */
 	private void save(Product product, Map<String, String> skuFields) {
 		try {
