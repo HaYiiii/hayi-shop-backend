@@ -232,8 +232,11 @@ class BackofficeProductEditTest {
 		Product other = product(null);
 		Product product = product(null);
 
-		assertProblem(addVariant(product.id, "{\"sku\": \"" + other.sku + "\", \"name\": \"L\", \"basePrice\": 1}"),
-				409, "CATALOG_SKU_TAKEN");
+		MockHttpServletResponse taken = addVariant(product.id,
+				"{\"sku\": \"" + other.sku.toLowerCase() + "\", \"name\": \"L\", \"basePrice\": 1}");
+		assertProblem(taken, 409, "CATALOG_SKU_TAKEN");
+		assertThat(JsonPath.<List<String>>read(taken.getContentAsString(), "$.errors[*].field"))
+			.containsExactly("sku");
 		MockHttpServletResponse negative = addVariant(product.id, variant("L", -1, false));
 		assertProblem(negative, 422, "CATALOG_PRICE_NEGATIVE");
 		assertThat(JsonPath.<List<String>>read(negative.getContentAsString(), "$.errors[*].field"))

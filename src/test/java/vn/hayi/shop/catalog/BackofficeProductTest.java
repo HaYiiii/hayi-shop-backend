@@ -253,6 +253,64 @@ class BackofficeProductTest {
 		assertProblem(response, 409, "CATALOG_SKU_TAKEN");
 		assertThat(JsonPath.<String>read(response.getContentAsString(), "$.detail")).contains(taken)
 			.doesNotContain(fresh);
+		assertThat(JsonPath.<List<String>>read(response.getContentAsString(), "$.errors[*].field"))
+			.containsExactly("variants[1].sku");
+		assertThat(JsonPath.<List<String>>read(response.getContentAsString(), "$.errors[*].code"))
+			.containsExactly("CATALOG_SKU_TAKEN");
+	}
+
+	@Test
+	void everyTakenSkuIsReportedOnItsOwnFieldArchivedOnesIncluded() throws Exception {
+		String first = code("ma");
+		String second = code("mb");
+		MockHttpServletResponse owner = create("""
+				{"productCode": "%s", "name": "Chủ", "slug": "%s",
+				 "variants": [{"sku": "%s", "name": "M", "basePrice": 1, "isDefault": true},
+				              {"sku": "%s", "name": "L", "basePrice": 2, "isDefault": false}]}
+				""".formatted(code("chu"), slug("chu"), first, second));
+		assertThat(owner.getStatus()).as(owner.getContentAsString()).isEqualTo(201);
+		String ownerId = JsonPath.read(owner.getContentAsString(), "$.productId");
+		String archived = JsonPath.<List<String>>read(owner.getContentAsString(), "$.variants[*].variantId").getLast();
+		assertThat(this.auth.perform(post(PRODUCTS + "/" + ownerId + "/variants/" + archived + "/archive"),
+				this.admin, true).getStatus()).isEqualTo(200);
+
+		MockHttpServletResponse response = create("""
+				{"productCode": "%s", "name": "Ba", "slug": "%s",
+				 "variants": [{"sku": "%s", "name": "S", "basePrice": 1, "isDefault": true},
+				              {"sku": "%s", "name": "M", "basePrice": 1, "isDefault": false},
+				              {"sku": "%s", "name": "L", "basePrice": 2, "isDefault": false}]}
+				""".formatted(code("ba"), slug("ba"), second.toLowerCase(), code("moi"), first));
+
+		assertProblem(response, 409, "CATALOG_SKU_TAKEN");
+		assertThat(JsonPath.<List<String>>read(response.getContentAsString(), "$.errors[*].field"))
+			.containsExactly("variants[0].sku", "variants[2].sku");
+	}
+
+	@Test
+	void concurrentCreatesOfOneSkuReportTheFieldToTheLoser() throws Exception {
+		String sku = code("dua");
+		CountDownLatch start = new CountDownLatch(1);
+		List<MockHttpServletResponse> responses = new ArrayList<>();
+		try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+			List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+			for (int i = 0; i < 2; i++) {
+				String body = simple(code("dua"), slug("dua"), 1000, sku);
+				results.add(pool.submit(() -> {
+					start.await();
+					return create(body);
+				}));
+			}
+			start.countDown();
+			for (Future<MockHttpServletResponse> result : results) {
+				responses.add(result.get(30, TimeUnit.SECONDS));
+			}
+		}
+
+		assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsExactlyInAnyOrder(201, 409);
+		MockHttpServletResponse loser = responses.stream().filter(r -> r.getStatus() == 409).findFirst().orElseThrow();
+		assertProblem(loser, 409, "CATALOG_SKU_TAKEN");
+		assertThat(JsonPath.<List<String>>read(loser.getContentAsString(), "$.errors[*].field"))
+			.containsExactly("variants[0].sku");
 	}
 
 	@Test
