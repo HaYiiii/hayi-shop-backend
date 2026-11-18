@@ -41,6 +41,7 @@ import vn.hayi.shop.catalog.domain.ProductVariant;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.error.RuleViolationsException;
 import vn.hayi.shop.shared.patch.Change;
 
 /**
@@ -105,12 +106,13 @@ public class ProductService {
 		if (this.products.existsBySlug(product.getSlug())) {
 			throw taken(CatalogErrorCode.CATALOG_SLUG_TAKEN, product.getSlug());
 		}
-		List<String> takenSkus = this.products
-			.findTakenSkus(product.getVariants().stream().map(ProductVariant::getSku).toList());
-		if (!takenSkus.isEmpty()) {
-			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, String.join(", ", takenSkus));
+		Map<String, String> skuFields = new LinkedHashMap<>();
+		List<ProductVariant> created = product.getVariants();
+		for (int i = 0; i < created.size(); i++) {
+			skuFields.put(created.get(i).getSku(), "variants[" + i + "].sku");
 		}
-		save(product);
+		requireFreeSkus(skuFields);
+		save(product, skuFields);
 		this.audit.record(AuditEntry.of(client.actor(), AuditSource.BACKOFFICE_WEB, "PRODUCT_CREATE", "PRODUCT",
 				product.getId())
 			.withNewValue(snapshot(product))
@@ -156,14 +158,13 @@ public class ProductService {
 		Product product = find(productId, expected);
 		product.requireChangeable();
 		String sku = normalizeCode(request.sku());
-		if (!this.products.findTakenSkus(List.of(sku)).isEmpty()) {
-			throw taken(CatalogErrorCode.CATALOG_SKU_TAKEN, sku);
-		}
+		Map<String, String> skuFields = Map.of(sku, "sku");
+		requireFreeSkus(skuFields);
 		UUID previousDefault = product.defaultVariant().map(ProductVariant::getId).orElse(null);
 		ProductVariant added = product.addVariant(
 				new NewVariant(sku, request.name(), request.basePrice(), request.isDefault()), this.clock.instant(),
 				() -> this.products.saveAndFlush(product));
-		save(product);
+		save(product, skuFields);
 		Map<String, Object> values = new LinkedHashMap<>();
 		values.put("variantId", added.getId());
 		values.put("sku", added.getSku());
@@ -417,6 +418,15 @@ public class ProductService {
 	}
 
 	private void save(Product product) {
+		save(product, Map.of());
+	}
+
+	/**
+	 * @param skuFields the request field of each new SKU (as stored), so a SKU a concurrent request took after the
+	 * checks is still reported on its field (Decision Z2, AE2). MySQL stops at the first duplicate, so this path
+	 * reports only that one SKU; the pre-check reports all of them.
+	 */
+	private void save(Product product, Map<String, String> skuFields) {
 		try {
 			this.products.saveAndFlush(product);
 		}
@@ -426,12 +436,34 @@ public class ProductService {
 			if (message != null) {
 				for (Map.Entry<String, CatalogErrorCode> key : UNIQUE_KEYS.entrySet()) {
 					if (message.contains(key.getKey())) {
-						throw taken(key.getValue(), duplicateValue(message));
+						String value = duplicateValue(message);
+						if (key.getValue() == CatalogErrorCode.CATALOG_SKU_TAKEN && skuFields.containsKey(value)) {
+							throw skusTaken(List.of(value), skuFields);
+						}
+						throw taken(key.getValue(), value);
 					}
 				}
 			}
 			throw ex;
 		}
+	}
+
+	/** {@code skuFields}: request field by SKU as stored, in request order. */
+	private void requireFreeSkus(Map<String, String> skuFields) {
+		List<String> takenSkus = this.products.findTakenSkus(skuFields.keySet());
+		if (!takenSkus.isEmpty()) {
+			throw skusTaken(takenSkus, skuFields);
+		}
+	}
+
+	/** {@code 409 CATALOG_SKU_TAKEN} with one {@code errors[]} entry per taken SKU, in request order (Z2). */
+	private static RuleViolationsException skusTaken(Collection<String> takenSkus, Map<String, String> skuFields) {
+		List<String> inOrder = skuFields.keySet().stream().filter(takenSkus::contains).toList();
+		List<RuleViolationsException.Violation> violations = inOrder.stream()
+			.map(sku -> new RuleViolationsException.Violation(skuFields.get(sku),
+					CatalogErrorCode.CATALOG_SKU_TAKEN.name()))
+			.toList();
+		return new RuleViolationsException(CatalogErrorCode.CATALOG_SKU_TAKEN, violations, String.join(", ", inOrder));
 	}
 
 	/** MySQL names the value: {@code Duplicate entry 'ML-M' for key 'cat_product_variant.uk_…'}. */

@@ -5,15 +5,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Values that are well-formed but break business rules, reported per field → the code's status (usually {@code 422})
- * with {@code errors[] { field, code }} (API README §6).
+ * Values that are well-formed but break business rules, reported per field → the code's status (usually {@code 422},
+ * {@code 409} for a taken value) with {@code errors[] { field, code }} (API README §6).
  */
 public class RuleViolationsException extends DomainException {
 
 	private final List<Violation> violations;
 
-	public RuleViolationsException(ErrorCode code, List<Violation> violations) {
-		super(code, code.name() + ": " + violations);
+	public RuleViolationsException(ErrorCode code, List<Violation> violations, Object... detailArgs) {
+		super(code, code.name() + ": " + violations, detailArgs);
 		this.violations = List.copyOf(violations);
 	}
 
