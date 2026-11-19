@@ -472,13 +472,22 @@ class PublicMenuTest {
 		seedListing(soldOut.id, "SOLD_OUT");
 		soldOutOption(required.items.getFirst());
 
+		Product sizesOut = product(category, 20000);
+		list(sizesOut.id);
+		listVariant(sizesOut, sizesOut.variants.getFirst(), "{\"price\": 20000, \"availabilityState\": \"AVAILABLE\"}");
+		seedVariant(sizesOut, sizesOut.variants.getFirst(), "SOLD_OUT");
+
 		String body = resolve(line("p", paused.id, paused.variants.getFirst(), 1),
 				line("s", soldOut.id, soldOut.variants.getFirst(), 1),
-				line("u", unsatisfiable.id, unsatisfiable.variants.getFirst(), 1, required.items.getFirst()))
+				line("u", unsatisfiable.id, unsatisfiable.variants.getFirst(), 1, required.items.getFirst()),
+				line("d", sizesOut.id, sizesOut.variants.getFirst(), 1))
 			.getContentAsString();
 
 		assertThat(issues(body, "p")).containsExactly("PRODUCT_PAUSED");
 		assertThat(issues(body, "s")).containsExactly("PRODUCT_SOLD_OUT");
+		assertThat(issues(body, "d")).as("every shown size stopped, listing still AVAILABLE")
+			.containsExactly("PRODUCT_SOLD_OUT", "VARIANT_SOLD_OUT");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.lines[?(@.ref == 'd')].unitPrice")).containsExactly(20000);
 		assertThat(issues(body, "u")).containsExactly("REQUIRED_OPTION_GROUP_UNSATISFIABLE", "OPTION_ITEM_SOLD_OUT");
 		assertThat(issueTargets(body, "u", "optionGroupId")).contains(required.id);
 		assertThat(JsonPath.<List<Integer>>read(body, "$.lines[?(@.ref == 'p')].unitPrice")).as("still priced")

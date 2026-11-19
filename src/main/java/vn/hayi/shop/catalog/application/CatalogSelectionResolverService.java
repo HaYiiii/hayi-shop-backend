@@ -125,10 +125,20 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 		StringBuilder canonical = new StringBuilder();
 		for (ResolvedLine line : lines) {
 			canonical.append(line.ref()).append('|').append(line.productId()).append('|').append(line.variantId())
-				.append('|').append(line.normalizedOptionItemIds()).append('|').append(line.unitPrice())
+				.append('|').append(String.join(",", line.normalizedOptionItemIds().stream().map(UUID::toString).toList()))
+				.append('|').append(line.unitPrice())
 				.append('|').append(line.lineTotal()).append('|').append(line.productAvailability())
-				.append('|').append(line.variantAvailability()).append('|').append(line.optionAvailability())
-				.append('|').append(line.issues()).append('\n');
+				.append('|').append(line.variantAvailability());
+			line.optionAvailability().forEach((id, state) -> canonical.append('|').append(id).append('=').append(state));
+			// From the fields, not record toString(), whose format the JDK leaves open.
+			line.issues()
+				.forEach(issue -> canonical.append('|')
+					.append(issue.code())
+					.append(':')
+					.append(issue.optionItemId())
+					.append(':')
+					.append(issue.optionGroupId()));
+			canonical.append('\n');
 		}
 		try {
 			return HexFormat.of()
