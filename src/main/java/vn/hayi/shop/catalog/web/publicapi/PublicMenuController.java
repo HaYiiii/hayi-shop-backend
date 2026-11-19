@@ -27,6 +27,7 @@ import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveRequestDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveResponseDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuCategoryDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuCollectionDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.MenuTagDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuProductDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.PublicMenuDto;
 
@@ -125,7 +126,8 @@ class PublicMenuController implements PublicMenuApi {
 					.stream()
 					.map(product -> new MenuProductDto(product.productId(), product.slug(), product.name(),
 							product.primaryImageUrl(), product.fromPrice(),
-							MenuAvailabilityDto.valueOf(product.availability()), product.tags()))
+							MenuAvailabilityDto.valueOf(product.availability()),
+							product.tags().stream().map(tag -> new MenuTagDto(tag.slug(), tag.name())).toList()))
 					.toList(),
 				category.children().stream().map(PublicMenuController::toDto).toList());
 	}

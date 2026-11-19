@@ -27,7 +27,7 @@ paths:
         `availability` follow Decision AH2–AH3; outside the selling schedule at `at` (ISO instant, default now,
         `Asia/Ho_Chi_Minh`) a Product is `OUTSIDE_SELLING_HOURS`, after `PAUSED` and `SOLD_OUT` (AK2–AK3). `at` is echoed
         as `evaluatedAt`. `collections` holds only `ACTIVE` Collections (by `sortOrder` then name) with the Products shown in
-        this menu in Collection order, and drops one with none; `tags` are slugs, sorted (Decision AL3).
+        this menu in Collection order, and drops one with none; `tags` are `{ slug, name }` sorted by slug (Decision AL3).
         `Cache-Control: public, max-age=30`.
       security: []
       parameters:
@@ -278,7 +278,14 @@ components:
         availability: { $ref: '#/components/schemas/MenuAvailability' }
         tags:
           type: array
-          items: { type: string }
+          description: Sorted by slug (Decision AL3, amended 2026-11-20).
+          items: { $ref: '#/components/schemas/MenuTag' }
+    MenuTag:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
     MenuCategory:
       type: object
       required: [categoryId, name, slug, imageUrl, products, children]

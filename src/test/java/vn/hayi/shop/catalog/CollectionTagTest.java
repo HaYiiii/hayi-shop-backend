@@ -220,6 +220,7 @@ class CollectionTagTest {
 		String zTag = createTag(slug("zz"), "Z");
 		String aTag = createTag(slug("aa"), "A");
 		putTags(shown, "\"v1\"", zTag, aTag);
+		patchTag(zTag, "{\"name\": \"Zê mới\"}");
 
 		String later = JsonPath.read(createCollection("Sau").getContentAsString(), "$.collectionId");
 		String sooner = JsonPath.read(createCollection("Trước").getContentAsString(), "$.collectionId");
@@ -247,9 +248,13 @@ class CollectionTagTest {
 				"$.collections[?(@.collectionId == '" + later + "')].productIds").getFirst())
 			.as("only shown Products, in Collection order")
 			.containsExactly(alsoShown, shown);
-		assertThat(JsonPath.<List<List<String>>>read(body, "$..products[?(@.productId == '" + shown + "')].tags")
-			.getFirst()).containsExactly(slugOf(aTag), slugOf(zTag));
-		assertThat(JsonPath.<List<List<String>>>read(body, "$..products[?(@.productId == '" + alsoShown + "')].tags")
+		String tags = "$..products[?(@.productId == '" + shown + "')].tags";
+		assertThat(JsonPath.<List<String>>read(body, tags + "[*].slug"))
+			.as("tags carry slug and name, by slug (AL3 amended 2026-11-20)")
+			.containsExactly(slugOf(aTag), slugOf(zTag));
+		assertThat(JsonPath.<List<String>>read(body, tags + "[*].name")).as("a rename shows")
+			.containsExactly("A", "Zê mới");
+		assertThat(JsonPath.<List<List<Object>>>read(body, "$..products[?(@.productId == '" + alsoShown + "')].tags")
 			.getFirst()).isEmpty();
 	}
 
