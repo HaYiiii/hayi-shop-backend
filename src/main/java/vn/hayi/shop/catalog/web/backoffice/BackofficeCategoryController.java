@@ -111,8 +111,9 @@ class BackofficeCategoryController implements CategoriesApi {
 		Change<String> slug = patch.requiredText("slug", 128, SLUG);
 		Change<String> description = patch.optionalText("description", 500);
 		Change<UUID> parentId = patch.optionalUuid("parentId");
+		Change<UUID> imageObjectId = patch.optionalUuid("imageObjectId");
 		patch.validate();
-		return new CategoryChanges(name, slug, description, parentId);
+		return new CategoryChanges(name, slug, description, parentId, imageObjectId);
 	}
 
 	private CatalogClient client() {
@@ -129,7 +130,7 @@ class BackofficeCategoryController implements CategoriesApi {
 		return new CategoryTreeDto(roots.stream()
 			.map(root -> new CategoryNodeDto(root.categoryId(), root.slug(), root.name(), root.description(),
 					root.parentId(), root.sortOrder(), CategoryStatusDto.valueOf(root.status()), root.version(),
-					utc(root.createdAt()), utc(root.updatedAt()),
+					utc(root.createdAt()), utc(root.updatedAt()), root.imageObjectId(), root.imageUrl(),
 					root.children().stream().map(BackofficeCategoryController::toDto).toList()))
 			.toList());
 	}
@@ -137,7 +138,8 @@ class BackofficeCategoryController implements CategoriesApi {
 	private static CategoryDto toDto(CategoryView category) {
 		return new CategoryDto(category.categoryId(), category.slug(), category.name(), category.description(),
 				category.parentId(), category.sortOrder(), CategoryStatusDto.valueOf(category.status()),
-				category.version(), utc(category.createdAt()), utc(category.updatedAt()));
+				category.version(), utc(category.createdAt()), utc(category.updatedAt()), category.imageObjectId(),
+				category.imageUrl());
 	}
 
 	private static OffsetDateTime utc(Instant instant) {

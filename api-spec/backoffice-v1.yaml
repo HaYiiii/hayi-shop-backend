@@ -1212,6 +1212,138 @@ paths:
         '409': { $ref: '#/components/responses/VariantConflict' }
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/ProductActivationInvalid' }
+  /products/{productId}/images:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Products]
+      operationId: addProductImage
+      summary: Link an uploaded image to a Product, last in its order
+      description: |
+        `CATALOG_MANAGE` (Decision AG1). The stored file must be `ACTIVE`, `PUBLIC` and a `PRODUCT_IMAGE`, else
+        `422 CATALOG_IMAGE_INVALID`; linked anywhere already → `409 CATALOG_IMAGE_IN_USE`; at most 10 images →
+        `409 CATALOG_IMAGE_LIMIT_REACHED`. The first image, or one sent with `isPrimary: true`, becomes the primary.
+        Archived Product → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Bumps the Product version. Optional `If-Match`.
+        Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductImageInput' }
+      responses:
+        '201':
+          description: The Product with the new image.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ImageConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/ImageInvalid' }
+  /products/{productId}/images/order:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      tags: [Products]
+      operationId: reorderProductImages
+      summary: Put a Product's images in a new order
+      description: |
+        `CATALOG_MANAGE` (Decision AG3). `imageIds` must be exactly the current images (duplicates → `400`, a
+        different set → `409 CATALOG_IMAGE_ORDER_STALE`). Requires `If-Match`; the same order keeps the version.
+        Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductImageOrderRequest' }
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ImageConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /products/{productId}/images/{imageId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+      - name: imageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Products]
+      operationId: updateProductImage
+      summary: Edit an image's alt text or make it the primary
+      description: |
+        `CATALOG_MANAGE` (Decision AG2). JSON Merge Patch on `altText` (`null` clears) and `isPrimary` (only `true`);
+        any other key → `400`. Unknown image → `404 CATALOG_IMAGE_NOT_FOUND`. Requires `If-Match`; no change keeps
+        the version. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/ProductImagePatch' }
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [Products]
+      operationId: removeProductImage
+      summary: Unlink an image; its stored file is archived
+      description: |
+        `CATALOG_MANAGE` (Decision AG2, W7). The stored file becomes `ARCHIVED` in the same transaction; when it was
+        the primary, the first image left takes over. Unknown image → `404 CATALOG_IMAGE_NOT_FOUND`. Optional
+        `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
   /products/{productId}/activate:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -2084,7 +2216,8 @@ components:
     Product:
       type: object
       required: [productId, productCode, slug, name, productType, status, primaryCategoryId, shortDescription,
-        description, sortOrder, archivedAt, createdAt, updatedAt, version, variants, optionGroups, optionItemOverrides]
+        description, sortOrder, archivedAt, createdAt, updatedAt, version, variants, optionGroups, optionItemOverrides,
+        images]
       properties:
         productId: { type: string, format: uuid }
         productCode: { type: string }
@@ -2109,6 +2242,43 @@ components:
         optionItemOverrides:
           type: array
           items: { $ref: '#/components/schemas/ProductOptionItemOverride' }
+        images:
+          type: array
+          description: In order; one is the primary when there are any (Decision AG5).
+          items: { $ref: '#/components/schemas/ProductImage' }
+    ProductImage:
+      type: object
+      required: [imageId, storedObjectId, url, altText, sortOrder, isPrimary]
+      properties:
+        imageId: { type: string, format: uuid }
+        storedObjectId: { type: string, format: uuid }
+        url: { type: [string, 'null'], description: Public URL of the stored file. }
+        altText: { type: [string, 'null'] }
+        sortOrder: { type: integer, format: int32 }
+        isPrimary: { type: boolean }
+    ProductImageInput:
+      type: object
+      required: [storedObjectId]
+      properties:
+        storedObjectId: { type: string, format: uuid }
+        altText: { type: [string, 'null'], maxLength: 255 }
+        isPrimary: { type: [boolean, 'null'], description: '`true` makes it the primary; the first image is anyway.' }
+    ProductImagePatch:
+      type: object
+      additionalProperties: false
+      description: JSON Merge Patch of an image (Decision AG2); `null` clears `altText`; `isPrimary` takes only `true`.
+      properties:
+        altText: { type: [string, 'null'], maxLength: 255 }
+        isPrimary: { type: boolean, enum: [true] }
+    ProductImageOrderRequest:
+      type: object
+      required: [imageIds]
+      properties:
+        imageIds:
+          type: array
+          maxItems: 10
+          description: Every image of the Product in the new order; no duplicates (→ `400`).
+          items: { type: string, format: uuid }
     ProductOptionGroup:
       type: object
       description: An attached option group with its effective min/max (override over group, Decision AC5).
@@ -2327,7 +2497,8 @@ components:
       description: Lower-case kebab-case, unique among every Category (Decision Y1).
     Category:
       type: object
-      required: [categoryId, slug, name, description, parentId, sortOrder, status, version, createdAt, updatedAt]
+      required: [categoryId, slug, name, description, parentId, sortOrder, status, version, createdAt, updatedAt,
+        imageObjectId, imageUrl]
       properties:
         categoryId: { type: string, format: uuid }
         slug: { type: string }
@@ -2339,11 +2510,13 @@ components:
         version: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        imageObjectId: { type: [string, 'null'], format: uuid }
+        imageUrl: { type: [string, 'null'], description: Public URL of the image (Decision AG5). }
     CategoryNode:
       type: object
       description: A root Category with the fields of `Category` plus its children (which have none).
       required: [categoryId, slug, name, description, parentId, sortOrder, status, version, createdAt, updatedAt,
-        children]
+        imageObjectId, imageUrl, children]
       properties:
         categoryId: { type: string, format: uuid }
         slug: { type: string }
@@ -2355,6 +2528,8 @@ components:
         version: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        imageObjectId: { type: [string, 'null'], format: uuid }
+        imageUrl: { type: [string, 'null'] }
         children:
           type: array
           items: { $ref: '#/components/schemas/Category' }
@@ -2384,6 +2559,12 @@ components:
         slug: { $ref: '#/components/schemas/CategorySlug' }
         description: { type: [string, 'null'], maxLength: 500 }
         parentId: { type: [string, 'null'], format: uuid }
+        imageObjectId:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            An `ACTIVE` `PUBLIC` `CATEGORY_IMAGE` linked nowhere else (`422 CATALOG_IMAGE_INVALID`,
+            `409 CATALOG_IMAGE_IN_USE`); `null` clears it. The replaced image is archived (Decision AG4).
     CategoryReorderRequest:
       type: object
       required: [parentId, categoryIds]
@@ -2904,7 +3085,7 @@ components:
     NotFound:
       description: |
         `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
-        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_VARIANT_NOT_FOUND`, `CATALOG_LISTING_NOT_FOUND`, `UPLOAD_NOT_FOUND`,
+        `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_VARIANT_NOT_FOUND`, `CATALOG_LISTING_NOT_FOUND`, `CATALOG_IMAGE_NOT_FOUND`, `UPLOAD_NOT_FOUND`,
         `CATALOG_OPTION_GROUP_NOT_FOUND`, `CATALOG_OPTION_ITEM_NOT_FOUND`
       content:
         application/problem+json:
@@ -2964,6 +3145,18 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    ImageConflict:
+      description: |
+        `CATALOG_IMAGE_IN_USE`, `CATALOG_IMAGE_LIMIT_REACHED`, `CATALOG_IMAGE_ORDER_STALE` or
+        `CATALOG_PRODUCT_INVALID_TRANSITION` (Decision AG)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ImageInvalid:
+      description: '`CATALOG_IMAGE_INVALID` — the stored file is not a usable image of that purpose (Decision AG1)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     ListingConflict:
       description: |
         `CATALOG_PRODUCT_ARCHIVED`, `CATALOG_OPTION_ARCHIVED` or `BRANCH_INVALID_TRANSITION` (a `CLOSED` Branch)
@@ -3001,13 +3194,15 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     CategoryConflict:
       description: |
-        `CATALOG_SLUG_TAKEN`, `CATALOG_CATEGORY_ARCHIVED`, `CATALOG_CATEGORY_IN_USE` or `CATALOG_CATEGORY_ORDER_STALE`
-        (Decision Y)
+        `CATALOG_SLUG_TAKEN`, `CATALOG_CATEGORY_ARCHIVED`, `CATALOG_CATEGORY_IN_USE`, `CATALOG_CATEGORY_ORDER_STALE`
+        (Decision Y) or `CATALOG_IMAGE_IN_USE` (AG4)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     CategoryDepthExceeded:
-      description: '`CATALOG_CATEGORY_DEPTH_EXCEEDED` — the tree would get more than 2 levels (Decision Y2, Y3)'
+      description: |
+        `CATALOG_CATEGORY_DEPTH_EXCEEDED` — the tree would get more than 2 levels (Decision Y2, Y3); or
+        `CATALOG_IMAGE_INVALID` for the image of a PATCH (AG4)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

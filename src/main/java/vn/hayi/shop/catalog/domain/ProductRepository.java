@@ -25,6 +25,10 @@ public interface ProductRepository extends Repository<Product, UUID> {
 	@Query("select v.sku from ProductVariant v where v.sku in :skus order by v.sku")
 	List<String> findTakenSkus(Collection<String> skus);
 
+	/** Whether a Product image already uses this stored object (Decision AG1). */
+	@Query("select count(i) > 0 from ProductImage i where i.storedObjectId = :storedObjectId")
+	boolean isImageInUse(UUID storedObjectId);
+
 	boolean existsByPrimaryCategoryIdAndStatusNot(UUID primaryCategoryId, ProductStatus status);
 
 	/**

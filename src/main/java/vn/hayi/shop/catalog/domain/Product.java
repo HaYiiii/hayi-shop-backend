@@ -3,6 +3,7 @@ package vn.hayi.shop.catalog.domain;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -47,6 +48,9 @@ public class Product {
 
 	/** Non-archived Variants a Product may have (Decision Z1, AE2). */
 	public static final int MAX_LIVE_VARIANTS = 20;
+
+	/** Images a Product may have (Decision AG1). */
+	public static final int MAX_IMAGES = 10;
 
 	@Id
 	private UUID id;
@@ -94,6 +98,14 @@ public class Product {
 	@OrderBy("sortOrder")
 	@BatchSize(size = 100)
 	private List<ProductVariant> variants = new ArrayList<>();
+
+	/** Images in order, one primary (Decision AG); as for Variants, a change touches {@code updatedAt}. */
+	@OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+	@OptimisticLock(excluded = true)
+	@JoinColumn(name = "product_id", nullable = false, updatable = false)
+	@OrderBy("sortOrder")
+	@BatchSize(size = 100)
+	private List<ProductImage> images = new ArrayList<>();
 
 	/** Attached option groups in order (Decision AC2); as for Variants, a change touches {@code updatedAt}. */
 	@ElementCollection
@@ -466,6 +478,127 @@ public class Product {
 			current.get().setDefault(false, now);
 			writeReleasedDefault.run();
 		}
+	}
+
+	/**
+	 * Adds an image last (Decision AG1). It becomes the primary when asked or when it is the first one.
+	 * @param writeReleasedPrimary writes the Product once the previous primary has let go of the flag
+	 * ({@code primary_marker} is unique per statement; as for the default Variant)
+	 * @throws DomainException {@code CATALOG_IMAGE_LIMIT_REACHED}, {@code CATALOG_PRODUCT_INVALID_TRANSITION}
+	 */
+	public ProductImage addImage(UUID storedObjectId, String altText, boolean makePrimary, Instant now,
+			Runnable writeReleasedPrimary) {
+		requireNotArchived("add an image to");
+		if (this.images.size() >= MAX_IMAGES) {
+			throw new DomainException(CatalogErrorCode.CATALOG_IMAGE_LIMIT_REACHED,
+					"Product " + this.id + " already has " + MAX_IMAGES + " images");
+		}
+		boolean isPrimary = makePrimary || this.images.isEmpty();
+		this.updatedAt = now;
+		if (isPrimary) {
+			releasePrimary(writeReleasedPrimary);
+		}
+		int sortOrder = this.images.stream().mapToInt(ProductImage::getSortOrder).max().orElse(-1) + 1;
+		ProductImage image = ProductImage.create(storedObjectId, altText, sortOrder, isPrimary, now);
+		this.images.add(image);
+		return image;
+	}
+
+	/**
+	 * Edits an image's alt text and makes it the primary when {@code makePrimary} (Decision AG2). Returns what
+	 * changed, with {@code primaryImageId} when the primary moved.
+	 */
+	public FieldDiff editImage(UUID imageId, String altText, boolean makePrimary, Instant now,
+			Runnable writeReleasedPrimary) {
+		requireNotArchived("edit an image of");
+		ProductImage image = image(imageId);
+		FieldDiff diff = new FieldDiff();
+		image.setAltText(diff.track("altText", image.getAltText(), altText));
+		if (makePrimary && !image.isPrimary()) {
+			UUID previous = primaryImage().map(ProductImage::getId).orElse(null);
+			diff.track("isPrimary", false, true);
+			diff.track("primaryImageId", previous, imageId);
+			this.updatedAt = now;
+			releasePrimary(writeReleasedPrimary);
+			image.setPrimary(true);
+		}
+		if (!diff.isEmpty()) {
+			this.updatedAt = now;
+		}
+		return diff;
+	}
+
+	/**
+	 * Removes an image (Decision AG2); when it was the primary, the first one left takes over. Returns the removed
+	 * image, whose stored object the caller archives.
+	 * @param writeReleasedPrimary as for {@link #addImage}
+	 */
+	public ProductImage removeImage(UUID imageId, Instant now, Runnable writeReleasedPrimary) {
+		requireNotArchived("remove an image of");
+		ProductImage image = image(imageId);
+		this.updatedAt = now;
+		boolean wasPrimary = image.isPrimary();
+		if (wasPrimary && this.images.size() > 1) {
+			image.setPrimary(false);
+			writeReleasedPrimary.run();
+		}
+		this.images.remove(image);
+		if (wasPrimary && !this.images.isEmpty()) {
+			this.images.stream()
+				.min(Comparator.comparingInt(ProductImage::getSortOrder))
+				.ifPresent(next -> next.setPrimary(true));
+		}
+		return image;
+	}
+
+	/**
+	 * Puts the images in this order (Decision AG3); returns whether anything changed.
+	 * @throws DomainException {@code CATALOG_IMAGE_ORDER_STALE} unless {@code imageIds} is exactly the current set
+	 */
+	public boolean reorderImages(List<UUID> imageIds, Instant now) {
+		requireNotArchived("reorder the images of");
+		Set<UUID> current = this.images.stream().map(ProductImage::getId).collect(Collectors.toSet());
+		if (imageIds.size() != current.size() || !current.containsAll(imageIds)) {
+			throw new DomainException(CatalogErrorCode.CATALOG_IMAGE_ORDER_STALE,
+					"The images of Product " + this.id + " have changed");
+		}
+		List<UUID> inOrder = this.images.stream()
+			.sorted(Comparator.comparingInt(ProductImage::getSortOrder))
+			.map(ProductImage::getId)
+			.toList();
+		if (inOrder.equals(imageIds)) {
+			return false;
+		}
+		for (int i = 0; i < imageIds.size(); i++) {
+			image(imageIds.get(i)).setSortOrder(i);
+		}
+		this.updatedAt = now;
+		return true;
+	}
+
+	private void releasePrimary(Runnable writeReleasedPrimary) {
+		Optional<ProductImage> current = primaryImage();
+		if (current.isPresent()) {
+			current.get().setPrimary(false);
+			writeReleasedPrimary.run();
+		}
+	}
+
+	private Optional<ProductImage> primaryImage() {
+		return this.images.stream().filter(ProductImage::isPrimary).findFirst();
+	}
+
+	private ProductImage image(UUID imageId) {
+		return this.images.stream()
+			.filter(image -> image.getId().equals(imageId))
+			.findFirst()
+			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_IMAGE_NOT_FOUND,
+					"No image " + imageId + " in Product " + this.id));
+	}
+
+	/** The images in their order. */
+	public List<ProductImage> getImages() {
+		return this.images.stream().sorted(Comparator.comparingInt(ProductImage::getSortOrder)).toList();
 	}
 
 	/** The Variant with this id, archived or not. */

@@ -27,6 +27,7 @@ import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.storage.api.StoredObjectInfo;
 
 /**
  * Creates, edits, archives, orders and reads the Category tree (Catalog §5.3, API 08 §1.2, Decision Y); every change
@@ -48,7 +49,11 @@ public class CategoryService {
 
 	private final Clock clock;
 
-	CategoryService(CategoryRepository categories, ProductRepository products, AuditRecorder audit, Clock clock) {
+	private final CatalogImages images;
+
+	CategoryService(CategoryRepository categories, ProductRepository products, AuditRecorder audit, Clock clock,
+			CatalogImages images) {
+		this.images = images;
 		this.categories = categories;
 		this.products = products;
 		this.audit = audit;
@@ -69,7 +74,7 @@ public class CategoryService {
 		values.put("description", category.getDescription());
 		values.put("parentId", category.getParentId());
 		record(client, "CATEGORY_CREATE", "CATEGORY", category.getId(), null, values);
-		return CategoryView.of(category);
+		return view(category);
 	}
 
 	/**
@@ -93,18 +98,31 @@ public class CategoryService {
 		// Archived children count too: they would end up on a third level (Decision Y3).
 		boolean hasChildren = moves && this.categories.existsByParentId(categoryId);
 		int position = moves ? nextPosition(newParentId) : category.getSortOrder();
+		UUID newImage = changes.imageObjectId().applyTo(category.getImageObjectId());
+		boolean imageChanges = !Objects.equals(newImage, category.getImageObjectId());
+		if (imageChanges && newImage != null) {
+			this.images.requireLinkable(newImage, StoredObjectInfo.Purpose.CATEGORY_IMAGE);
+		}
 		Instant now = this.clock.instant();
 		FieldDiff diff = category.edit(changes.name().applyTo(category.getName()), newSlug,
 				changes.description().applyTo(category.getDescription()), now);
 		if (moves) {
 			category.moveTo(parent, hasChildren, position, diff, now);
 		}
+		UUID replaced = imageChanges ? category.changeImage(newImage, diff, now) : null;
 		if (diff.isEmpty()) {
-			return CategoryView.of(category);
+			return view(category);
 		}
 		save(category);
+		if (replaced != null) {
+			this.images.unlinked(replaced);
+		}
 		record(client, "CATEGORY_UPDATE", "CATEGORY", categoryId, diff.oldValues(), diff.newValues());
-		return CategoryView.of(category);
+		return view(category);
+	}
+
+	private CategoryView view(Category category) {
+		return CategoryView.of(category, this.images.url(category.getImageObjectId()));
 	}
 
 	/**
@@ -125,7 +143,7 @@ public class CategoryService {
 		this.categories.flush();
 		record(client, "CATEGORY_ARCHIVE", "CATEGORY", categoryId, Map.of("status", previous.name()),
 				Map.of("status", category.getStatus().name()));
-		return CategoryView.of(category);
+		return view(category);
 	}
 
 	/**
@@ -160,7 +178,7 @@ public class CategoryService {
 
 	@Transactional(readOnly = true)
 	public CategoryView get(UUID categoryId) {
-		return CategoryView.of(find(categoryId));
+		return view(find(categoryId));
 	}
 
 	/** Roots with their children, both by {@code sortOrder}; only {@code ACTIVE} unless {@code includeArchived}. */
@@ -168,15 +186,19 @@ public class CategoryService {
 	public List<CategoryView> tree(boolean includeArchived) {
 		List<Category> all = includeArchived ? this.categories.findAllByOrderBySortOrderAscIdAsc()
 				: this.categories.findByStatusOrderBySortOrderAscIdAsc(CategoryStatus.ACTIVE);
+		Map<UUID, String> urls = this.images.urls(
+				all.stream().map(Category::getImageObjectId).filter(Objects::nonNull).toList());
 		Map<UUID, List<CategoryView>> children = new LinkedHashMap<>();
 		for (Category category : all) {
 			if (category.getParentId() != null) {
-				children.computeIfAbsent(category.getParentId(), id -> new ArrayList<>()).add(CategoryView.of(category));
+				children.computeIfAbsent(category.getParentId(), id -> new ArrayList<>())
+					.add(CategoryView.of(category, urls.get(category.getImageObjectId())));
 			}
 		}
 		return all.stream()
 			.filter(category -> category.getParentId() == null)
-			.map(root -> CategoryView.of(root, children.getOrDefault(root.getId(), List.of())))
+			.map(root -> CategoryView.of(root, urls.get(root.getImageObjectId()),
+					children.getOrDefault(root.getId(), List.of())))
 			.toList();
 	}
 
