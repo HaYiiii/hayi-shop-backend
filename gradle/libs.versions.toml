@@ -8,6 +8,7 @@ uuid-creator = "6.1.1"
 shedlock = "7.10.1"
 openapi-generator = "7.26.0"
 bouncycastle = "1.86"
+awssdk = "2.57.8"
 
 [libraries]
 spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "spring-modulith" }
@@ -17,6 +18,8 @@ shedlock-spring = { module = "net.javacrumbs.shedlock:shedlock-spring", version.
 shedlock-jdbc = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
 # Argon2id password hashing (ERD 01 iam_user_credential)
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
+# S3-compatible object storage: SeaweedFS locally, managed S3 in production (Decision H5, G8, AF4)
+awssdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
