@@ -266,6 +266,28 @@ class BackofficeBranchListingTest {
 
 		putVariant(product.id, variant, "\"v3\"", "{\"price\": 32000, \"availabilityState\": \"NOT_AVAILABLE\"}");
 		assertThat(heldState("cat_branch_variant_listing", product.id)).isEqualTo("SOLD_OUT");
+
+		MockHttpServletResponse relisted = putVariant(product.id, variant, "\"v4\"",
+				"{\"price\": 32000, \"availabilityState\": \"AVAILABLE\"}");
+		assertThat(JsonPath.<List<String>>read(relisted.getContentAsString(), "$.listing.variants[*].availabilityState"))
+			.as("relisting restores the held state (AD5)")
+			.containsExactly("SOLD_OUT");
+		assertThat(heldState("cat_branch_variant_listing", product.id)).isNull();
+	}
+
+	@Test
+	void anOptionWithoutBranchPriceStoresNothing() throws Exception {
+		Item item = optionItem();
+
+		MockHttpServletResponse none = putOption(item.id, "\"v0\"", "{\"extraPrice\": null}");
+
+		assertThat(none.getStatus()).as(none.getContentAsString()).isEqualTo(200);
+		assertThat(none.getHeader("ETag")).isEqualTo("\"v0\"");
+		assertThat(audits("BRANCH_OPTION_ITEM_LISTING_PUT")).isEmpty();
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM cat_branch_option_item_listing WHERE option_item_id = ?")
+			.param(UuidBinary.toBytes(UUID.fromString(item.id)))
+			.query(Long.class)
+			.single()).isZero();
 	}
 
 	@Test
