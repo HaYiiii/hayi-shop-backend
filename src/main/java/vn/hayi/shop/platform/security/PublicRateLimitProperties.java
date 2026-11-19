@@ -13,8 +13,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param resolvePerMinute {@code POST …/catalog/resolve} requests per IP per minute
  * @param trustedProxies IPs or CIDR ranges of reverse proxies whose {@code X-Forwarded-For} is believed; empty (the
  * default) = the peer address is the client, the header is ignored
+ * @param maxTrackedClients bound of the counters kept in memory; above it the least recently used are dropped
  */
 @ConfigurationProperties("hayi.rate-limit.public")
 public record PublicRateLimitProperties(@DefaultValue("true") boolean enabled, @DefaultValue("120") int getPerMinute,
-		@DefaultValue("30") int resolvePerMinute, @DefaultValue List<String> trustedProxies) {
+		@DefaultValue("30") int resolvePerMinute, @DefaultValue List<String> trustedProxies,
+		@DefaultValue("100000") long maxTrackedClients) {
 }

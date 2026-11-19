@@ -1,5 +1,8 @@
 package vn.hayi.shop.platform.security;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.Arrays;
 import java.util.List;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,6 +39,27 @@ public final class ClientIpResolver {
 			}
 		}
 		return peer;
+	}
+
+	/**
+	 * The key a client is counted under: an IPv4 address as is, an IPv6 address by its {@code /64}, the usual
+	 * allocation to one subscriber, so cycling addresses inside it does not reset the count.
+	 */
+	public static String limitKey(String address) {
+		if (address == null || address.indexOf(':') < 0) {
+			return address;
+		}
+		try {
+			byte[] bytes = InetAddress.ofLiteral(address).getAddress();
+			if (bytes.length != 16) {
+				return address;
+			}
+			Arrays.fill(bytes, 8, 16, (byte) 0);
+			return InetAddress.getByAddress(bytes).getHostAddress() + "/64";
+		}
+		catch (IllegalArgumentException | UnknownHostException ex) {
+			return address;
+		}
 	}
 
 	private boolean isTrusted(String address) {

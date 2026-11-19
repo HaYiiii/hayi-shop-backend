@@ -18,7 +18,7 @@ class PublicRateLimitConfig implements WebMvcConfigurer {
 	PublicRateLimitConfig(PublicRateLimitProperties properties, SecurityEventSink events, Clock clock) {
 		this.interceptor = new PublicRateLimitInterceptor(properties,
 				new ClientIpResolver(properties.trustedProxies()),
-				new FixedWindowRateLimiter(Duration.ofMinutes(1), clock), events);
+				new FixedWindowRateLimiter(Duration.ofMinutes(1), properties.maxTrackedClients(), clock), events);
 	}
 
 	@Override

@@ -53,7 +53,8 @@ final class PublicRateLimitInterceptor implements HandlerInterceptor {
 			return true;
 		}
 		String ip = this.ips.resolve(request);
-		FixedWindowRateLimiter.Decision decision = this.limiter.acquire(bucket + "|" + ip, limit);
+		FixedWindowRateLimiter.Decision decision = this.limiter.acquire(bucket + "|" + ClientIpResolver.limitKey(ip),
+				limit);
 		if (decision.allowed()) {
 			return true;
 		}
