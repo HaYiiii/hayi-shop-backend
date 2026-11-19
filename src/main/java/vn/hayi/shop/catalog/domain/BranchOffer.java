@@ -28,13 +28,16 @@ public record BranchOffer(BranchSellability sellability, List<OfferedVariant> va
 			.collect(Collectors.toMap(BranchOptionItemListing::getOptionItemId,
 					BranchOptionItemListing::getAvailabilityState));
 		return BranchSellability.of(product, listing, groups, optionStates)
-			.map(sellability -> new BranchOffer(sellability, variants(product, listing),
-					groups(product, groups, optionListings)));
+			.map(sellability -> new BranchOffer(sellability,
+					variants(product, listing, sellability.availability()), groups(product, groups, optionListings)));
 	}
 
-	/** Listed {@code ACTIVE} sizes; a stopped Product stops every size (AI2, Decision F). */
-	private static List<OfferedVariant> variants(Product product, BranchProductListing listing) {
-		AvailabilityState productState = listing.getAvailabilityState();
+	/**
+	 * Listed {@code ACTIVE} sizes; a stopped Product stops every size (AI2, Decision F), whether stopped by hand or
+	 * derived (AH3, e.g. a required option group with nothing left).
+	 */
+	private static List<OfferedVariant> variants(Product product, BranchProductListing listing,
+			AvailabilityState productState) {
 		boolean productStopped = EnumSet.of(AvailabilityState.SOLD_OUT, AvailabilityState.PAUSED).contains(productState);
 		return product.getVariants()
 			.stream()

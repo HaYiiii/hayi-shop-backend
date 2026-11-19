@@ -329,6 +329,28 @@ class PublicMenuTest {
 	}
 
 	@Test
+	void aDerivedSoldOutStopsEverySizeAndArchivedItemsAreHidden() throws Exception {
+		String category = category(null);
+		Group required = group(1, "SINGLE", 2);
+		Product product = product(category, 30000, 40000);
+		attach(product.id, required.id);
+		list(product.id);
+		assertThat(this.auth.perform(post("/api/backoffice/v1/option-groups/" + required.id + "/items/"
+				+ required.items.get(0) + "/archive"), this.admin, true).getStatus()).isEqualTo(200);
+		soldOutOption(required.items.get(1));
+
+		String body = productDetail(product.id).getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.availability")).isEqualTo("SOLD_OUT");
+		assertThat(JsonPath.<List<String>>read(body, "$.variants[*].availability"))
+			.as("the required group has nothing left, so no size can be ordered")
+			.containsExactly("SOLD_OUT", "SOLD_OUT");
+		assertThat(JsonPath.<List<String>>read(body, "$.optionGroups[0].items[*].optionItemId"))
+			.as("the archived item is hidden")
+			.containsExactly(required.items.get(1));
+	}
+
+	@Test
 	void anArchivedGroupIsNotShown() throws Exception {
 		String category = category(null);
 		Group optional = group(0, "SINGLE", 1);
