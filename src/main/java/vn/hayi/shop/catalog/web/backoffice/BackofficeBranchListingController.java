@@ -25,6 +25,7 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListingPageDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchListingRowDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchOptionItemListingDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchOptionItemListingInputDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.BranchOptionItemListingListDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchVariantListingDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchVariantListingInputDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductPagePageDto;
@@ -82,6 +83,16 @@ class BackofficeBranchListingController implements BranchListingsApi {
 		var expected = VersionTags.require(ifMatch);
 		return withETag(this.listings.putVariant(branchId, productId, variantId, body.getPrice(),
 				body.getAvailabilityState().getValue(), expected, client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_VIEW)
+	public ResponseEntity<BranchOptionItemListingListDto> listBranchOptionItemListings(UUID branchId) {
+		return ResponseEntity.ok(new BranchOptionItemListingListDto(this.listings.listOptionItems(branchId)
+			.stream()
+			.map(listing -> new BranchOptionItemListingDto(listing.optionItemId(), listing.extraPrice(),
+					AvailabilityStateDto.valueOf(listing.availabilityState()), listing.version()))
+			.toList()));
 	}
 
 	@Override

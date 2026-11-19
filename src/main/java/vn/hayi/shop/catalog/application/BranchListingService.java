@@ -1,6 +1,7 @@
 package vn.hayi.shop.catalog.application;
 
 import java.time.Clock;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -93,6 +94,17 @@ public class BranchListingService {
 					.stream()
 					.collect(Collectors.toMap(BranchProductListing::getProductId, Function.identity()));
 		return found.map(product -> BranchListingView.of(product, byProduct.get(product.getId())));
+	}
+
+	/** The option items with a listing here, by {@code optionItemId} (Decision AM1). */
+	@Transactional(readOnly = true)
+	public List<BranchOptionItemListingView> listOptionItems(UUID branchId) {
+		this.branches.requireExists(branchId);
+		return this.optionListings.findByIdBranchId(branchId)
+			.stream()
+			.sorted(Comparator.comparing(BranchOptionItemListing::getOptionItemId))
+			.map(BranchOptionItemListingView::of)
+			.toList();
 	}
 
 	/**
