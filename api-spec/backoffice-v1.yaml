@@ -1945,6 +1945,26 @@ paths:
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/ListingRuleViolated' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/option-item-listings:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+    get:
+      tags: [BranchListings]
+      operationId: listBranchOptionItemListings
+      summary: The option items that have a listing at this Branch
+      description: |
+        `CATALOG_VIEW` at that Branch, like `GET …/listings` (Decision AM1). Only items with a listing here, sorted by
+        `optionItemId`; an item without one uses the library price and is created with `If-Match: "v0"` (AD3).
+        Unknown Branch → `404 BRANCH_NOT_FOUND`.
+      responses:
+        '200':
+          description: The listings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BranchOptionItemListingList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /branches/{branchId}/option-item-listings/{optionItemId}:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -2790,6 +2810,13 @@ components:
         extraPrice: { type: [integer, 'null'], format: int64 }
         availabilityState: { $ref: '#/components/schemas/AvailabilityState' }
         version: { type: integer, format: int64 }
+    BranchOptionItemListingList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BranchOptionItemListing' }
     BranchVariantListing:
       type: object
       required: [variantId, name, basePrice, price, effectivePrice, availabilityState]

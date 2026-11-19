@@ -16,6 +16,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import org.hibernate.annotations.BatchSize;
 
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.id.UuidV7;
@@ -57,6 +58,7 @@ public class Collection {
 	@CollectionTable(name = "cat_collection_product", joinColumns = @JoinColumn(name = "collection_id"))
 	@Column(name = "product_id")
 	@OrderColumn(name = "sort_order")
+	@BatchSize(size = 100)
 	private List<UUID> productIds = new ArrayList<>();
 
 	protected Collection() {
