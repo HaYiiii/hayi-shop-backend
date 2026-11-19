@@ -338,6 +338,43 @@ class BackofficeBranchListingTest {
 	}
 
 	@Test
+	void listsTheOptionListingsOfThisBranchWithTheirVersion() throws Exception {
+		assertThat(JsonPath.<List<Object>>read(optionListings(this.branchId, this.manager).getContentAsString(),
+				"$.items")).as("none yet").isEmpty();
+		Item priced = optionItem();
+		Item cleared = optionItem();
+		Item untouched = optionItem();
+		assertThat(putOption(priced.id, "\"v0\"", "{\"extraPrice\": 7000}").getStatus()).isEqualTo(200);
+		assertThat(putOption(cleared.id, "\"v0\"", "{\"extraPrice\": 5000}").getStatus()).isEqualTo(200);
+		String etag = putOption(cleared.id, "\"v1\"", "{\"extraPrice\": null}").getHeader("ETag");
+
+		MockHttpServletResponse listed = optionListings(this.branchId, this.manager);
+
+		assertThat(listed.getStatus()).as(listed.getContentAsString()).isEqualTo(200);
+		String body = listed.getContentAsString();
+		List<String> ids = JsonPath.read(body, "$.items[*].optionItemId");
+		assertThat(ids).containsExactlyElementsOf(ids.stream().sorted().toList()).contains(priced.id, cleared.id)
+			.doesNotContain(untouched.id);
+		assertThat(JsonPath.<List<Integer>>read(body, "$.items[?(@.optionItemId == '" + priced.id + "')].extraPrice"))
+			.containsExactly(7000);
+		assertThat(JsonPath.<List<Integer>>read(body, "$.items[?(@.optionItemId == '" + cleared.id + "')].version"))
+			.as("same version as the ETag")
+			.containsExactly(Integer.parseInt(etag.replaceAll("\\D", "")));
+		assertThat(JsonPath.<List<Object>>read(optionListings(createBranch(), this.admin).getContentAsString(),
+				"$.items")).as("another Branch").isEmpty();
+	}
+
+	@Test
+	void optionListingsAreReadInScopeOnly() throws Exception {
+		assertProblem(optionListings(createBranch(), this.manager), 403, "BRANCH_SCOPE_DENIED");
+		assertProblem(optionListings(UUID.randomUUID().toString(), this.admin), 404, "BRANCH_NOT_FOUND");
+	}
+
+	private MockHttpServletResponse optionListings(String branch, Session session) throws Exception {
+		return this.auth.perform(get(BRANCHES + "/" + branch + "/option-item-listings"), session, false);
+	}
+
+	@Test
 	void optionListingRules() throws Exception {
 		Item item = optionItem();
 
