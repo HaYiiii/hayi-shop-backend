@@ -16,4 +16,7 @@ public interface BranchListingRepository extends Repository<BranchProductListing
 
 	List<BranchProductListing> findByBranchIdAndProductIdIn(UUID branchId, Collection<UUID> productIds);
 
+	/** The listings of a Branch in any state but {@code state}, for its menu (Decision AH1). */
+	List<BranchProductListing> findByBranchIdAndAvailabilityStateNot(UUID branchId, AvailabilityState state);
+
 }
