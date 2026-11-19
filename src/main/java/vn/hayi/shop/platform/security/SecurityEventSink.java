@@ -1,5 +1,6 @@
 package vn.hayi.shop.platform.security;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -9,5 +10,8 @@ import java.util.UUID;
 public interface SecurityEventSink {
 
 	void csrfValidationFailed(UUID userId, UUID sessionId, ClientInfo client);
+
+	/** An IP went over a public rate limit (Decision W9); {@code metadata} holds the bucket, limit and path. */
+	void rateLimitExceeded(ClientInfo client, Map<String, ?> metadata);
 
 }

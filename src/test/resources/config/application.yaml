@@ -1,5 +1,9 @@
 # Test-only overrides (classpath:/config/ wins over classpath:/application.yaml).
 hayi:
+  rate-limit:
+    public:                     # every MockMvc call comes from 127.0.0.1; PublicRateLimitTest sets its own limits
+      get-per-minute: 1000000
+      resolve-per-minute: 1000000
   security:
     allow-ephemeral-key: true   # tests never use a real signing key
     mfa-encryption-key: dGVzdC1vbmx5LW1mYS1rZXktMzItYnl0ZXMtbG9uZyE=   # test-only AES-256 key, never used elsewhere

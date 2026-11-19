@@ -76,6 +76,11 @@ public class SecurityEventLog implements SecurityEventSink {
 	}
 
 	@Override
+	public void rateLimitExceeded(ClientInfo client, Map<String, ?> metadata) {
+		record(SecurityEventType.RATE_LIMIT_EXCEEDED, null, null, null, client, metadata);
+	}
+
+	@Override
 	public void csrfValidationFailed(UUID userId, UUID sessionId, ClientInfo client) {
 		record(SecurityEventType.CSRF_VALIDATION_FAILED, userId, sessionId, client);
 	}
