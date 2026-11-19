@@ -26,6 +26,7 @@ import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveLineDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveRequestDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveResponseDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuCategoryDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.MenuCollectionDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuProductDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.PublicMenuDto;
 
@@ -50,7 +51,12 @@ class PublicMenuController implements PublicMenuApi {
 		return ResponseEntity.ok()
 			.cacheControl(THIRTY_SECONDS)
 			.body(new PublicMenuDto(menu.branchId(), menu.evaluatedAt().atOffset(ZoneOffset.UTC),
-					menu.categories().stream().map(PublicMenuController::toDto).toList(), List.of()));
+					menu.categories().stream().map(PublicMenuController::toDto).toList(),
+					menu.collections()
+						.stream()
+						.map(collection -> new MenuCollectionDto(collection.collectionId(), collection.name(),
+								collection.productIds()))
+						.toList()));
 	}
 
 	/** Writes nothing and is never cached: a cart's prices and states are read fresh (Decision AJ4). */
@@ -119,7 +125,7 @@ class PublicMenuController implements PublicMenuApi {
 					.stream()
 					.map(product -> new MenuProductDto(product.productId(), product.slug(), product.name(),
 							product.primaryImageUrl(), product.fromPrice(),
-							MenuAvailabilityDto.valueOf(product.availability()), List.of()))
+							MenuAvailabilityDto.valueOf(product.availability()), product.tags()))
 					.toList(),
 				category.children().stream().map(PublicMenuController::toDto).toList());
 	}

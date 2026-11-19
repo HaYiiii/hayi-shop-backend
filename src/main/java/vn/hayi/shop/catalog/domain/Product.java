@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import jakarta.persistence.CascadeType;
@@ -131,6 +132,14 @@ public class Product {
 	@OptimisticLock(excluded = true)
 	@BatchSize(size = 100)
 	private Set<ProductOptionItemOverride> optionItemOverrides = new HashSet<>();
+
+	/** Its Tags (Decision AL2), kept as ids; as for Variants, a change touches {@code updatedAt}. */
+	@ElementCollection
+	@CollectionTable(name = "cat_product_tag", joinColumns = @JoinColumn(name = "product_id"))
+	@Column(name = "tag_id")
+	@OptimisticLock(excluded = true)
+	@BatchSize(size = 100)
+	private Set<UUID> tagIds = new HashSet<>();
 
 	protected Product() {
 	}
@@ -316,6 +325,25 @@ public class Product {
 		this.optionItemOverrides.addAll(next);
 		this.updatedAt = now;
 		return true;
+	}
+
+	/**
+	 * Replaces its Tags, which the caller checked exist (Decision AL2). Returns whether anything changed.
+	 * @throws DomainException {@code CATALOG_PRODUCT_INVALID_TRANSITION} when archived
+	 */
+	public boolean replaceTags(Set<UUID> tagIds, Instant now) {
+		requireNotArchived("tag");
+		if (this.tagIds.equals(tagIds)) {
+			return false;
+		}
+		this.tagIds.clear();
+		this.tagIds.addAll(tagIds);
+		this.updatedAt = now;
+		return true;
+	}
+
+	public Set<UUID> getTagIds() {
+		return Set.copyOf(this.tagIds);
 	}
 
 	/** Whether {@code overrides} would change the override price of some item (Decision AC3). */
@@ -633,7 +661,12 @@ public class Product {
 	}
 
 	private static boolean sameSchedules(List<SellingScheduleSpec> current, List<SellingScheduleSpec> next) {
-		return current.size() == next.size() && new HashSet<>(current).equals(new HashSet<>(next));
+		// Order does not matter, but repeats do: [A, A, B] is not [A, B, B].
+		return current.size() == next.size() && counts(current).equals(counts(next));
+	}
+
+	private static Map<SellingScheduleSpec, Long> counts(List<SellingScheduleSpec> schedules) {
+		return schedules.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
 	}
 
 	/** The schedules as values, windows in a stable order. */

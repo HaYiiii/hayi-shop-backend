@@ -8,12 +8,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -33,6 +35,9 @@ import vn.hayi.shop.catalog.domain.BranchSellability;
 import vn.hayi.shop.catalog.domain.Category;
 import vn.hayi.shop.catalog.domain.CategoryRepository;
 import vn.hayi.shop.catalog.domain.CategoryStatus;
+import vn.hayi.shop.catalog.domain.CollectionRepository;
+import vn.hayi.shop.catalog.domain.CollectionStatus;
+import vn.hayi.shop.catalog.domain.TagRepository;
 import vn.hayi.shop.catalog.domain.OptionGroup;
 import vn.hayi.shop.catalog.domain.OptionGroupRepository;
 import vn.hayi.shop.catalog.domain.Product;
@@ -73,9 +78,16 @@ public class PublicMenuService {
 
 	private final Clock clock;
 
+	private final TagRepository tags;
+
+	private final CollectionRepository collections;
+
 	PublicMenuService(BranchDirectory branches, BranchListingRepository listings,
 			BranchOptionItemListingRepository optionListings, ProductRepository products,
-			OptionGroupRepository optionGroups, CategoryRepository categories, CatalogImages images, Clock clock) {
+			OptionGroupRepository optionGroups, CategoryRepository categories, CatalogImages images, Clock clock,
+			TagRepository tags, CollectionRepository collections) {
+		this.tags = tags;
+		this.collections = collections;
 		this.branches = branches;
 		this.listings = listings;
 		this.optionListings = optionListings;
@@ -109,14 +121,43 @@ public class PublicMenuService {
 			.map(PublicMenuService::primaryImage)
 			.flatMap(Optional::stream)
 			.toList());
+		Map<UUID, String> tagSlugs = new HashMap<>();
+		Set<UUID> tagIds = found.stream().flatMap(product -> product.getTagIds().stream()).collect(Collectors.toSet());
+		if (!tagIds.isEmpty()) {
+			this.tags.findByIdIn(tagIds).forEach(tag -> tagSlugs.put(tag.getId(), tag.getSlug()));
+		}
 		Map<UUID, List<MenuProduct>> byCategory = new LinkedHashMap<>();
 		found.stream().sorted(MENU_ORDER).forEach(product -> BranchSellability
 			.of(product, byProduct.get(product.getId()), groups, optionStates, local(evaluatedAt))
 			.ifPresent(sellability -> byCategory.computeIfAbsent(product.getPrimaryCategoryId(), id -> new ArrayList<>())
 				.add(new MenuProduct(product.getId(), product.getSlug(), product.getName(),
 						primaryImage(product).map(imageUrls::get).orElse(null), sellability.fromPrice(),
-						sellability.availability().name()))));
-		return new Menu(branchId, evaluatedAt, tree(byCategory));
+						sellability.availability().name(), slugs(product, tagSlugs)))));
+		List<MenuCategory> tree = tree(byCategory);
+		// A Product shows only when its primary Category does (AH1), so read what the tree kept.
+		Set<UUID> shown = new HashSet<>();
+		tree.forEach(root -> collectShown(root, shown));
+		return new Menu(branchId, evaluatedAt, tree, collections(shown));
+	}
+
+	private static void collectShown(MenuCategory category, Set<UUID> shown) {
+		category.products().forEach(product -> shown.add(product.productId()));
+		category.children().forEach(child -> collectShown(child, shown));
+	}
+
+	private static List<String> slugs(Product product, Map<UUID, String> tagSlugs) {
+		return product.getTagIds().stream().map(tagSlugs::get).filter(Objects::nonNull).sorted().toList();
+	}
+
+	/** {@code ACTIVE} Collections with the Products shown in this menu, in Collection order; empty ones dropped (AL3). */
+	private List<MenuCollection> collections(Set<UUID> shown) {
+		return this.collections.findByStatus(CollectionStatus.ACTIVE)
+			.stream()
+			.sorted(CollectionService.ORDER)
+			.map(collection -> new MenuCollection(collection.getId(), collection.getName(),
+					collection.getProductIds().stream().filter(shown::contains).toList()))
+			.filter(collection -> !collection.productIds().isEmpty())
+			.toList();
 	}
 
 	/**
@@ -252,7 +293,11 @@ public class PublicMenuService {
 			.findFirst();
 	}
 
-	public record Menu(UUID branchId, Instant evaluatedAt, List<MenuCategory> categories) {
+	public record Menu(UUID branchId, Instant evaluatedAt, List<MenuCategory> categories,
+			List<MenuCollection> collections) {
+	}
+
+	public record MenuCollection(UUID collectionId, String name, List<UUID> productIds) {
 	}
 
 	public record MenuCategory(UUID categoryId, String name, String slug, String imageUrl,
@@ -260,7 +305,7 @@ public class PublicMenuService {
 	}
 
 	public record MenuProduct(UUID productId, String slug, String name, String primaryImageUrl, long fromPrice,
-			String availability) {
+			String availability, List<String> tags) {
 	}
 
 }

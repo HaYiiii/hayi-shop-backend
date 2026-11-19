@@ -5,7 +5,10 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -38,6 +41,8 @@ import vn.hayi.shop.catalog.domain.ProductOptionItemOverride;
 import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.catalog.domain.ProductType;
+import vn.hayi.shop.catalog.domain.Tag;
+import vn.hayi.shop.catalog.domain.TagRepository;
 import vn.hayi.shop.catalog.domain.ProductVariant;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.CommonErrorCode;
@@ -73,9 +78,12 @@ public class ProductService {
 
 	private final CatalogImages images;
 
+	private final TagRepository tags;
+
 	ProductService(ProductRepository products, CategoryRepository categories, OptionGroupRepository optionGroups,
-			AuditRecorder audit, Clock clock, CatalogImages images) {
+			AuditRecorder audit, Clock clock, CatalogImages images, TagRepository tags) {
 		this.images = images;
+		this.tags = tags;
 		this.products = products;
 		this.categories = categories;
 		this.optionGroups = optionGroups;
@@ -323,7 +331,43 @@ public class ProductService {
 
 	private ProductView view(Product product) {
 		return ProductView.of(product, attachedGroups(product),
-				this.images.urls(product.getImages().stream().map(ProductImage::getStoredObjectId).toList()));
+				this.images.urls(product.getImages().stream().map(ProductImage::getStoredObjectId).toList()),
+				tagsOf(product));
+	}
+
+	/** Its Tags by {@code slug} (Decision AL2). */
+	private List<TagView> tagsOf(Product product) {
+		return product.getTagIds().isEmpty() ? List.of()
+				: this.tags.findByIdIn(product.getTagIds())
+					.stream()
+					.sorted(Comparator.comparing(Tag::getSlug))
+					.map(TagView::of)
+					.toList();
+	}
+
+	/**
+	 * Replaces the Product's Tags at {@code expected} version (Decision AL2); no change keeps the version.
+	 * @throws DomainException {@code CATALOG_TAG_NOT_FOUND}
+	 */
+	@Transactional
+	public ProductView replaceTags(UUID productId, List<UUID> tagIds, ExpectedVersion expected,
+			CatalogClient client) {
+		Product product = find(productId, expected);
+		Set<UUID> wanted = new LinkedHashSet<>(tagIds);
+		Set<UUID> found = wanted.isEmpty() ? Set.of()
+				: this.tags.findByIdIn(wanted).stream().map(Tag::getId).collect(Collectors.toSet());
+		for (UUID tagId : wanted) {
+			if (!found.contains(tagId)) {
+				throw new DomainException(CatalogErrorCode.CATALOG_TAG_NOT_FOUND, "No Tag " + tagId);
+			}
+		}
+		List<UUID> before = product.getTagIds().stream().sorted().toList();
+		if (product.replaceTags(wanted, this.clock.instant())) {
+			save(product);
+			record(client, "PRODUCT_TAGS_REPLACE", product, Map.of("tagIds", before),
+					Map.of("tagIds", wanted.stream().sorted().toList()));
+		}
+		return view(product);
 	}
 
 	/**

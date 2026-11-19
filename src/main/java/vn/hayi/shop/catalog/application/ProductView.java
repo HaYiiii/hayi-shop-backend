@@ -20,13 +20,14 @@ public record ProductView(UUID productId, String productCode, String slug, Strin
 		String status, UUID primaryCategoryId, String shortDescription, String description, int sortOrder,
 		Instant archivedAt, Instant createdAt, Instant updatedAt, long version, List<Variant> variants,
 		List<AttachedGroup> optionGroups, List<ItemOverride> optionItemOverrides, List<Image> images,
-		List<Schedule> sellingSchedules) {
+		List<Schedule> sellingSchedules, List<TagView> tags) {
 
 	/**
 	 * {@code groups} are the option groups attached to {@code product}, by id; {@code imageUrls} the public URL of its
 	 * images' stored objects (Decision AG5).
 	 */
-	static ProductView of(Product product, Map<UUID, OptionGroup> groups, Map<UUID, String> imageUrls) {
+	static ProductView of(Product product, Map<UUID, OptionGroup> groups, Map<UUID, String> imageUrls,
+			List<TagView> tags) {
 		return new ProductView(product.getId(), product.getProductCode(), product.getSlug(), product.getName(),
 				product.getProductType().name(), product.getStatus().name(), product.getPrimaryCategoryId(),
 				product.getShortDescription(), product.getDescription(), product.getSortOrder(),
@@ -46,7 +47,7 @@ public record ProductView(UUID productId, String productCode, String slug, Strin
 							imageUrls.get(image.getStoredObjectId()), image.getAltText(), image.getSortOrder(),
 							image.isPrimary()))
 					.toList(),
-				product.getSellingSchedules().stream().map(Schedule::of).toList());
+				product.getSellingSchedules().stream().map(Schedule::of).toList(), tags);
 	}
 
 	/** A selling schedule (Decision AK1); no window = the whole day within the date range. */
