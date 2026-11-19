@@ -32,6 +32,7 @@ import vn.hayi.shop.catalog.domain.OptionGroup;
 import vn.hayi.shop.catalog.domain.OptionGroupChoice;
 import vn.hayi.shop.catalog.domain.OptionGroupRepository;
 import vn.hayi.shop.catalog.domain.Product;
+import vn.hayi.shop.catalog.domain.ProductImage;
 import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
 import vn.hayi.shop.catalog.domain.ProductOptionItemOverride;
 import vn.hayi.shop.catalog.domain.ProductRepository;
@@ -43,6 +44,7 @@ import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.shared.error.RuleViolationsException;
 import vn.hayi.shop.shared.patch.Change;
+import vn.hayi.shop.storage.api.StoredObjectInfo;
 
 /**
  * Creates and reads brand-level Products (Catalog §5.2, API 08 §1.3, Decision Z); every change is audited in the
@@ -69,8 +71,11 @@ public class ProductService {
 
 	private final Clock clock;
 
+	private final CatalogImages images;
+
 	ProductService(ProductRepository products, CategoryRepository categories, OptionGroupRepository optionGroups,
-			AuditRecorder audit, Clock clock) {
+			AuditRecorder audit, Clock clock, CatalogImages images) {
+		this.images = images;
 		this.products = products;
 		this.categories = categories;
 		this.optionGroups = optionGroups;
@@ -317,7 +322,106 @@ public class ProductService {
 	}
 
 	private ProductView view(Product product) {
-		return ProductView.of(product, attachedGroups(product));
+		return ProductView.of(product, attachedGroups(product),
+				this.images.urls(product.getImages().stream().map(ProductImage::getStoredObjectId).toList()));
+	}
+
+	/**
+	 * Links an uploaded image to the Product, last in its order (Decision AG1). The file is checked through
+	 * {@code storage.api} before the Product changes.
+	 */
+	@Transactional
+	public ProductView addImage(UUID productId, UUID storedObjectId, String altText, boolean makePrimary,
+			ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		this.images.requireLinkable(storedObjectId, StoredObjectInfo.Purpose.PRODUCT_IMAGE);
+		UUID previousPrimary = primaryImageId(product);
+		ProductImage added = product.addImage(storedObjectId, altText, makePrimary, this.clock.instant(),
+				() -> this.products.saveAndFlush(product));
+		save(product);
+		Map<String, Object> values = new LinkedHashMap<>();
+		values.put("imageId", added.getId());
+		values.put("storedObjectId", storedObjectId);
+		values.put("altText", altText);
+		values.put("isPrimary", added.isPrimary());
+		Map<String, Object> oldValue = null;
+		if (added.isPrimary()) {
+			oldValue = new LinkedHashMap<>();
+			oldValue.put("primaryImageId", previousPrimary);
+			values.put("primaryImageId", added.getId());
+		}
+		record(client, "PRODUCT_IMAGE_ADD", product, oldValue, values);
+		return view(product);
+	}
+
+	/** Merge Patch of one image: alt text, and the primary moves here when asked (Decision AG2). */
+	@Transactional
+	public ProductView updateImage(UUID productId, UUID imageId, Change<String> altText, boolean makePrimary,
+			ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		ProductImage image = product.getImages()
+			.stream()
+			.filter(candidate -> candidate.getId().equals(imageId))
+			.findFirst()
+			.orElseThrow(() -> new DomainException(CatalogErrorCode.CATALOG_IMAGE_NOT_FOUND,
+					"No image " + imageId + " in Product " + productId));
+		FieldDiff diff = product.editImage(imageId, altText.applyTo(image.getAltText()), makePrimary,
+				this.clock.instant(), () -> this.products.saveAndFlush(product));
+		if (!diff.isEmpty()) {
+			save(product);
+			record(client, "PRODUCT_IMAGE_UPDATE", product, withImage(imageId, diff.oldValues()),
+					withImage(imageId, diff.newValues()));
+		}
+		return view(product);
+	}
+
+	/** Unlinks an image and archives its file in the same transaction (Decision AG2, W7). */
+	@Transactional
+	public ProductView removeImage(UUID productId, UUID imageId, ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		ProductImage removed = product.removeImage(imageId, this.clock.instant(),
+				() -> this.products.saveAndFlush(product));
+		save(product);
+		this.images.unlinked(removed.getStoredObjectId());
+		Map<String, Object> oldValue = new LinkedHashMap<>();
+		oldValue.put("imageId", imageId);
+		oldValue.put("storedObjectId", removed.getStoredObjectId());
+		oldValue.put("isPrimary", removed.isPrimary());
+		Map<String, Object> newValue = new LinkedHashMap<>();
+		newValue.put("imageId", imageId);
+		newValue.put("primaryImageId", primaryImageId(product));
+		record(client, "PRODUCT_IMAGE_REMOVE", product, oldValue, newValue);
+		return view(product);
+	}
+
+	/** Puts the images in this order at {@code expected} version (Decision AG3). */
+	@Transactional
+	public ProductView reorderImages(UUID productId, List<UUID> imageIds, ExpectedVersion expected,
+			CatalogClient client) {
+		Product product = find(productId, expected);
+		product.requireChangeable();
+		List<UUID> before = product.getImages().stream().map(ProductImage::getId).toList();
+		if (product.reorderImages(imageIds, this.clock.instant())) {
+			save(product);
+			record(client, "PRODUCT_IMAGE_REORDER", product, Map.of("imageIds", before),
+					Map.of("imageIds", imageIds));
+		}
+		return view(product);
+	}
+
+	private static UUID primaryImageId(Product product) {
+		return product.getImages().stream().filter(ProductImage::isPrimary).map(ProductImage::getId).findFirst()
+			.orElse(null);
+	}
+
+	private static Map<String, Object> withImage(UUID imageId, Map<String, Object> values) {
+		Map<String, Object> entry = new LinkedHashMap<>();
+		entry.put("imageId", imageId);
+		entry.putAll(values);
+		return entry;
 	}
 
 	private static List<Map<String, Object>> groupsSnapshot(Product product) {

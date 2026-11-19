@@ -1,5 +1,7 @@
 package vn.hayi.shop.storage.api;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -10,6 +12,9 @@ import java.util.UUID;
 public interface StoredObjects {
 
 	Optional<StoredObjectInfo> find(UUID storedObjectId);
+
+	/** The known ones among {@code storedObjectIds}, by id, for a page of images. */
+	Map<UUID, StoredObjectInfo> findAll(Collection<UUID> storedObjectIds);
 
 	/**
 	 * {@code ACTIVE → ARCHIVED} once no business link uses it (Decision W7); the job that deletes the bytes comes in

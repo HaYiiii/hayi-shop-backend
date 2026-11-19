@@ -2,6 +2,10 @@ package vn.hayi.shop.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.endsWith;
+import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import java.awt.image.BufferedImage;
@@ -12,6 +16,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
@@ -28,6 +33,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.jayway.jsonpath.JsonPath;
@@ -41,6 +47,7 @@ import vn.hayi.shop.identity.IdentityFixtures;
 import vn.hayi.shop.platform.persistence.UuidBinary;
 import vn.hayi.shop.storage.api.StoredObjectInfo;
 import vn.hayi.shop.storage.api.StoredObjects;
+import vn.hayi.shop.storage.application.ObjectStore;
 
 /**
  * Staff upload an image straight to object storage with a pre-signed URL, then the server checks it (Storage
@@ -70,6 +77,9 @@ class BackofficeUploadTest {
 
 	@Autowired
 	StoredObjects storedObjects;
+
+	@MockitoSpyBean
+	ObjectStore store;
 
 	BackofficeAuth auth;
 
@@ -145,6 +155,54 @@ class BackofficeUploadTest {
 		String publicUrl = JsonPath.read(body, "$.publicUrl");
 		assertThat(publicUrl).contains("/hayi-public-test/category/").endsWith(id + ".png");
 		assertThat(status(id)).isEqualTo("ACTIVE");
+		HttpResponse<byte[]> anonymous = HTTP.send(HttpRequest.newBuilder(URI.create(publicUrl)).GET().build(),
+				HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(anonymous.statusCode()).as("public objects are read without credentials").isEqualTo(200);
+		assertThat(anonymous.body()).isEqualTo(png);
+	}
+
+	@Test
+	void theBrowserMayPutFromAnotherOrigin() throws Exception {
+		byte[] png = image("png", 2, 2);
+		String url = JsonPath.read(intent(this.admin, "PRODUCT_IMAGE", "image/png", png.length, sha256(png))
+			.getContentAsString(), "$.upload.url");
+
+		HttpResponse<String> preflight = HTTP.send(HttpRequest.newBuilder(URI.create(url))
+			.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+			.header("Origin", "http://localhost:3000")
+			.header("Access-Control-Request-Method", "PUT")
+			.header("Access-Control-Request-Headers", "content-type")
+			.build(), HttpResponse.BodyHandlers.ofString());
+
+		assertThat(preflight.statusCode()).as(preflight.body()).isLessThan(300);
+		assertThat(preflight.headers().firstValue("Access-Control-Allow-Origin")).isPresent();
+	}
+
+	@Test
+	void anIntentPastItsExpiryCanStillBeFinalizedUntilCleanup() throws Exception {
+		byte[] png = image("png", 2, 2);
+		String id = uploaded("PRODUCT_IMAGE", "image/png", png, png);
+		this.jdbc.sql("UPDATE sto_stored_object SET upload_expires_at = ? WHERE id = ?")
+			.params(this.clock.instant().minus(Duration.ofMinutes(1)), UuidBinary.toBytes(UUID.fromString(id)))
+			.update();
+
+		assertThat(finalizeUpload(this.admin, id).getStatus()).as("the orphan job (S7) has not run").isEqualTo(200);
+	}
+
+	@Test
+	void aConcurrentFinalizeThatLosesIsAlreadyFinalized() throws Exception {
+		byte[] png = image("png", 2, 2);
+		String id = uploaded("PRODUCT_IMAGE", "image/png", png, png);
+		UUID objectId = UUID.fromString(id);
+		doAnswer(invocation -> {
+			// the other finalize commits while this one reads the bytes
+			this.jdbc.sql("UPDATE sto_stored_object SET version = version + 1 WHERE id = ?")
+				.param(UuidBinary.toBytes(objectId))
+				.update();
+			return invocation.callRealMethod();
+		}).when(this.store).read(any(), endsWith(id + ".png"), anyLong());
+
+		assertProblem(finalizeUpload(this.admin, id), 409, "UPLOAD_ALREADY_FINALIZED");
 	}
 
 	@Test
@@ -188,6 +246,7 @@ class BackofficeUploadTest {
 		String id = uploaded("PRODUCT_IMAGE", "image/jpeg", png, png);
 
 		assertProblem(finalizeUpload(this.admin, id), 422, "UPLOAD_MIME_MISMATCH");
+		assertThat(status(id)).isEqualTo("FAILED");
 	}
 
 	@Test

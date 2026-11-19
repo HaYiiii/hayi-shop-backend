@@ -37,6 +37,9 @@ import vn.hayi.shop.platform.web.spec.backoffice.api.ProductsApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductCreateRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.OptionSelectionTypeDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageInputDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageOrderRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupsReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionItemOverrideDto;
@@ -142,6 +145,50 @@ class BackofficeProductController implements ProductsApi {
 	public ResponseEntity<ProductDto> archiveProductVariant(UUID productId, UUID variantId, String ifMatch,
 			String xCsrfToken) {
 		return withETag(this.products.archiveVariant(productId, variantId, VersionTags.optional(ifMatch), client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> addProductImage(UUID productId, ProductImageInputDto body, String ifMatch,
+			String xCsrfToken) {
+		ProductView product = this.products.addImage(productId, body.getStoredObjectId(), body.getAltText(),
+				Boolean.TRUE.equals(body.getIsPrimary()), VersionTags.optional(ifMatch), client());
+		return ResponseEntity.status(201).eTag(VersionTags.of(product.version())).body(toDto(product));
+	}
+
+	/** {@code isPrimary} only takes {@code true}: the primary moves here, a Product with images keeps one (AG2). */
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> updateProductImage(UUID productId, UUID imageId, JsonNode body, String ifMatch,
+			String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		MergePatch patch = MergePatch.of(body);
+		Change<String> altText = patch.optionalText("altText", 255);
+		Change<Boolean> isPrimary = patch.requiredBoolean("isPrimary");
+		patch.validate();
+		if (Boolean.FALSE.equals(isPrimary.applyTo(null))) {
+			throw new InvalidFieldsException(List.of(new InvalidFieldsException.Violation("isPrimary", "ONLY_TRUE")));
+		}
+		return withETag(this.products.updateImage(productId, imageId, altText, Boolean.TRUE.equals(isPrimary.applyTo(null)),
+				expected, client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> removeProductImage(UUID productId, UUID imageId, String ifMatch,
+			String xCsrfToken) {
+		return withETag(this.products.removeImage(productId, imageId, VersionTags.optional(ifMatch), client()));
+	}
+
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> reorderProductImages(UUID productId, ProductImageOrderRequestDto body,
+			String ifMatch, String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		if (new HashSet<>(body.getImageIds()).size() != body.getImageIds().size()) {
+			throw duplicate("imageIds");
+		}
+		return withETag(this.products.reorderImages(productId, body.getImageIds(), expected, client()));
 	}
 
 	private boolean hasPricePermission() {
@@ -283,6 +330,10 @@ class BackofficeProductController implements ProductsApi {
 				product.optionItemOverrides().stream()
 					.map(override -> new ProductOptionItemOverrideDto(override.optionItemId(),
 							override.extraPriceOverride(), override.isHidden()))
+					.toList(),
+				product.images().stream()
+					.map(image -> new ProductImageDto(image.imageId(), image.storedObjectId(), image.url(),
+							image.altText(), image.sortOrder(), image.isPrimary()))
 					.toList());
 	}
 

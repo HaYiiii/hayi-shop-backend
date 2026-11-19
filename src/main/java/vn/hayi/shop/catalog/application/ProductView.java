@@ -16,10 +16,13 @@ import vn.hayi.shop.catalog.domain.ProductVariant;
 public record ProductView(UUID productId, String productCode, String slug, String name, String productType,
 		String status, UUID primaryCategoryId, String shortDescription, String description, int sortOrder,
 		Instant archivedAt, Instant createdAt, Instant updatedAt, long version, List<Variant> variants,
-		List<AttachedGroup> optionGroups, List<ItemOverride> optionItemOverrides) {
+		List<AttachedGroup> optionGroups, List<ItemOverride> optionItemOverrides, List<Image> images) {
 
-	/** {@code groups} are the option groups attached to {@code product}, by id. */
-	static ProductView of(Product product, Map<UUID, OptionGroup> groups) {
+	/**
+	 * {@code groups} are the option groups attached to {@code product}, by id; {@code imageUrls} the public URL of its
+	 * images' stored objects (Decision AG5).
+	 */
+	static ProductView of(Product product, Map<UUID, OptionGroup> groups, Map<UUID, String> imageUrls) {
 		return new ProductView(product.getId(), product.getProductCode(), product.getSlug(), product.getName(),
 				product.getProductType().name(), product.getStatus().name(), product.getPrimaryCategoryId(),
 				product.getShortDescription(), product.getDescription(), product.getSortOrder(),
@@ -32,7 +35,17 @@ public record ProductView(UUID productId, String productCode, String slug, Strin
 					.stream()
 					.sorted(Comparator.comparing(ProductOptionItemOverride::optionItemId))
 					.map(ItemOverride::of)
+					.toList(),
+				product.getImages()
+					.stream()
+					.map(image -> new Image(image.getId(), image.getStoredObjectId(),
+							imageUrls.get(image.getStoredObjectId()), image.getAltText(), image.getSortOrder(),
+							image.isPrimary()))
 					.toList());
+	}
+
+	public record Image(UUID imageId, UUID storedObjectId, String url, String altText, int sortOrder,
+			boolean isPrimary) {
 	}
 
 	public record Variant(UUID variantId, String sku, String name, long basePrice, boolean isDefault, String status,

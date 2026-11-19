@@ -6,8 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
@@ -33,10 +36,14 @@ public class UploadService {
 
 	private final Clock clock;
 
-	UploadService(StoredObjectRepository objects, ObjectStore store, Clock clock) {
+	private final TransactionTemplate transactions;
+
+	UploadService(StoredObjectRepository objects, ObjectStore store, Clock clock,
+			PlatformTransactionManager transactionManager) {
 		this.objects = objects;
 		this.store = store;
 		this.clock = clock;
+		this.transactions = new TransactionTemplate(transactionManager);
 	}
 
 	/** A new intent with its pre-signed {@code PUT}; the web layer has checked the request against the policy. */
@@ -59,10 +66,18 @@ public class UploadService {
 
 	/**
 	 * Checks the uploaded bytes (Decision AF2). A failed check is kept as {@code FAILED} although the request gets an
-	 * error, so this transaction commits on a {@link DomainException}.
+	 * error: the transaction commits first, then the error is thrown.
 	 */
-	@Transactional(noRollbackFor = DomainException.class)
 	public FinalizedUpload finalizeUpload(UUID storedObjectId, UUID userId) {
+		Outcome outcome = this.transactions.execute(status -> check(storedObjectId, userId));
+		if (outcome.rejection() != null) {
+			throw outcome.rejection();
+		}
+		return outcome.upload();
+	}
+
+	/** Any exception rolls back; a failed check is returned instead, so its {@code FAILED} status is committed. */
+	private Outcome check(UUID storedObjectId, UUID userId) {
 		StoredObject object = this.objects.findById(storedObjectId)
 			.orElseThrow(() -> new DomainException(StorageErrorCode.UPLOAD_NOT_FOUND,
 					"No stored object " + storedObjectId));
@@ -75,14 +90,30 @@ public class UploadService {
 			.read(object.getBucket(), object.getObjectKey(), object.getPurpose().maxSizeBytes())
 			.orElseThrow(() -> new DomainException(StorageErrorCode.UPLOAD_NOT_FOUND_IN_STORAGE,
 					"Nothing uploaded yet for " + storedObjectId));
+		DomainException rejection = null;
 		try {
 			object.finalizeWith(stored.size(), (stored.bytes() != null) ? stored.bytes() : new byte[0],
 					this.clock.instant());
 		}
-		finally {
+		catch (DomainException ex) {
+			rejection = ex;
+		}
+		save(object);
+		return new Outcome(FinalizedUpload.of(object, publicUrl(object)), rejection);
+	}
+
+	private record Outcome(FinalizedUpload upload, DomainException rejection) {
+	}
+
+	/** Two finalize calls at once: the later one loses the optimistic lock, which is the same as "already done". */
+	private void save(StoredObject object) {
+		try {
 			this.objects.saveAndFlush(object);
 		}
-		return FinalizedUpload.of(object, publicUrl(object));
+		catch (OptimisticLockingFailureException ex) {
+			throw new DomainException(StorageErrorCode.UPLOAD_ALREADY_FINALIZED,
+					"Stored object " + object.getId() + " was finalized concurrently");
+		}
 	}
 
 	private String publicUrl(StoredObject object) {

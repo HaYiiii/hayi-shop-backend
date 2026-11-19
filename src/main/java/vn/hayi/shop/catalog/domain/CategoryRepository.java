@@ -37,6 +37,9 @@ public interface CategoryRepository extends Repository<Category, UUID> {
 
 	boolean existsByParentId(UUID parentId);
 
+	/** Whether a Category already shows this stored image (Decision AG1: one link per stored object). */
+	boolean existsByImageObjectId(UUID imageObjectId);
+
 	List<Category> findAllByOrderBySortOrderAscIdAsc();
 
 	List<Category> findByStatusOrderBySortOrderAscIdAsc(CategoryStatus status);

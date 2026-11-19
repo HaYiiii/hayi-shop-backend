@@ -35,6 +35,9 @@ public class Category {
 
 	private String description;
 
+	/** A stored {@code CATEGORY_IMAGE}, checked by the caller (Decision AG4). */
+	private UUID imageObjectId;
+
 	private int sortOrder;
 
 	@Enumerated(EnumType.STRING)
@@ -160,6 +163,25 @@ public class Category {
 			throw new DomainException(CatalogErrorCode.CATALOG_CATEGORY_ARCHIVED,
 					"Category " + this.id + " is archived");
 		}
+	}
+
+	/**
+	 * Sets or clears the image (Decision AG4), recording it in {@code diff}. Returns the image it replaces, whose
+	 * stored object the caller archives, or {@code null}.
+	 */
+	public UUID changeImage(UUID imageObjectId, FieldDiff diff, Instant now) {
+		requireNotArchived();
+		UUID previous = this.imageObjectId;
+		if (Objects.equals(previous, imageObjectId)) {
+			return null;
+		}
+		this.imageObjectId = diff.track("imageObjectId", previous, imageObjectId);
+		this.updatedAt = now;
+		return previous;
+	}
+
+	public UUID getImageObjectId() {
+		return this.imageObjectId;
 	}
 
 	private void touchIf(FieldDiff diff, Instant now) {

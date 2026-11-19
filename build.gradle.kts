@@ -43,7 +43,11 @@ dependencies {
 	implementation(libs.bouncycastle.prov)
 	implementation("com.github.ben-manes.caffeine:caffeine") // version from the Boot BOM
 	implementation(platform(libs.awssdk.bom))
-	implementation("software.amazon.awssdk:s3") // S3Client + S3Presigner (Decision AF4)
+	implementation("software.amazon.awssdk:s3") { // S3Client + S3Presigner (Decision AF4)
+		// S3ObjectStore sets the url-connection client explicitly; the default HTTP clients are not needed
+		exclude(group = "software.amazon.awssdk", module = "apache-client")
+		exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+	}
 	implementation("software.amazon.awssdk:url-connection-client")
 
 	runtimeOnly("com.mysql:mysql-connector-j")
@@ -103,6 +107,7 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 			"OptionItemPatch" to "tools.jackson.databind.JsonNode",
 			"ProductPatch" to "tools.jackson.databind.JsonNode",
 			"ProductVariantPatch" to "tools.jackson.databind.JsonNode",
+			"ProductImagePatch" to "tools.jackson.databind.JsonNode",
 		)
 	}
 }
