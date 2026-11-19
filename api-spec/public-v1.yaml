@@ -12,7 +12,49 @@ tags:
     description: ACTIVE Branches a customer can order from (API 02 §1, Decision N5, U)
   - name: FulfillmentAvailability
     description: Pickup slots a customer may choose (API 02 §3, Decision N, T)
+  - name: PublicMenu
+    description: What a Branch sells now, by Category (API 02 §2, Decision F, W3, W6, AH)
 paths:
+  /branches/{branchId}/menu:
+    get:
+      tags: [PublicMenu]
+      operationId: getBranchMenu
+      summary: The menu of one ACTIVE Branch
+      description: |
+        No sign-in. Unknown or not `ACTIVE` Branch → `404 BRANCH_NOT_FOUND` (Decision W6). Only `ACTIVE` Products with
+        a listing other than `NOT_AVAILABLE` and at least one Variant still listed (W3, AH1), under their primary
+        Category; only `ACTIVE` Categories that hold such a Product (themselves or a child). `fromPrice` and
+        `availability` follow Decision AH2–AH3. `at` (ISO instant, default now) is echoed as `evaluatedAt`; selling
+        hours come with BE #70, tags and collections with BE #71. `Cache-Control: public, max-age=30`.
+      security: []
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: at
+          in: query
+          required: false
+          description: When the order would be fulfilled; malformed → `400`.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The menu.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/ThirtySecondCache' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicMenu' }
+        '400':
+          description: '`VALIDATION_FAILED`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: '`BRANCH_NOT_FOUND`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /branches:
     get:
       tags: [PublicBranches]
@@ -123,9 +165,66 @@ components:
     FiveMinuteCache:
       description: '`public, max-age=300` (API 02, Decision U1).'
       schema: { type: string }
+    ThirtySecondCache:
+      description: '`public, max-age=30` (API 02, Decision AH4).'
+      schema: { type: string }
   schemas:
     Problem:
       $ref: './components/common.yaml#/components/schemas/Problem'
+    MenuAvailability:
+      type: string
+      enum: [AVAILABLE, SOLD_OUT, PAUSED, OUTSIDE_SELLING_HOURS]
+      description: Customer-facing, derived (API 02 §2, Decision F, AH3); `OUTSIDE_SELLING_HOURS` from BE #70.
+    MenuProduct:
+      type: object
+      required: [productId, slug, name, primaryImageUrl, fromPrice, availability, tags]
+      properties:
+        productId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        primaryImageUrl: { type: [string, 'null'] }
+        fromPrice: { type: integer, format: int64, description: VND, Branch price applied (Decision AH2). }
+        availability: { $ref: '#/components/schemas/MenuAvailability' }
+        tags:
+          type: array
+          items: { type: string }
+    MenuCategory:
+      type: object
+      required: [categoryId, name, slug, imageUrl, products, children]
+      properties:
+        categoryId: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        imageUrl: { type: [string, 'null'] }
+        products:
+          type: array
+          items: { $ref: '#/components/schemas/MenuProduct' }
+        children:
+          type: array
+          description: Child Categories (no deeper level).
+          items: { $ref: '#/components/schemas/MenuCategory' }
+    MenuCollection:
+      type: object
+      required: [collectionId, name, productIds]
+      properties:
+        collectionId: { type: string, format: uuid }
+        name: { type: string }
+        productIds:
+          type: array
+          items: { type: string, format: uuid }
+    PublicMenu:
+      type: object
+      required: [branchId, evaluatedAt, categories, collections]
+      properties:
+        branchId: { type: string, format: uuid }
+        evaluatedAt: { type: string, format: date-time }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/MenuCategory' }
+        collections:
+          type: array
+          description: Empty until BE #71.
+          items: { $ref: '#/components/schemas/MenuCollection' }
     PublicFulfillmentType:
       type: string
       enum: [PICKUP]
