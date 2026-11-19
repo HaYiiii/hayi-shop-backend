@@ -29,6 +29,8 @@ public interface ProductRepository extends Repository<Product, UUID> {
 
 	List<Product> findByIdInAndStatus(Collection<UUID> ids, ProductStatus status);
 
+	List<Product> findByIdIn(Collection<UUID> ids);
+
 	/** Whether a Product image already uses this stored object (Decision AG1). */
 	@Query("select count(i) > 0 from ProductImage i where i.storedObjectId = :storedObjectId")
 	boolean isImageInUse(UUID storedObjectId);

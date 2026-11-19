@@ -1,11 +1,16 @@
 package vn.hayi.shop.catalog.domain;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -14,7 +19,8 @@ import java.util.stream.Collectors;
  * What a customer may order of one Product at one Branch (Catalog §5.4–5.6, Decision F, AH, AI): its sizes with
  * Branch prices and its option groups with prices in three layers. Pure: the caller loads everything.
  */
-public record BranchOffer(BranchSellability sellability, List<OfferedVariant> variants, List<OfferedGroup> groups) {
+public record BranchOffer(BranchSellability sellability, AvailabilityState listingState,
+		List<OfferedVariant> variants, List<OfferedGroup> groups, List<UUID> unsatisfiedRequiredGroups) {
 
 	/**
 	 * Empty when the Product is not on the Branch's menu (AH1).
@@ -28,8 +34,90 @@ public record BranchOffer(BranchSellability sellability, List<OfferedVariant> va
 			.collect(Collectors.toMap(BranchOptionItemListing::getOptionItemId,
 					BranchOptionItemListing::getAvailabilityState));
 		return BranchSellability.of(product, listing, groups, optionStates)
-			.map(sellability -> new BranchOffer(sellability,
-					variants(product, listing, sellability.availability()), groups(product, groups, optionListings)));
+			.map(sellability -> new BranchOffer(sellability, listing.getAvailabilityState(),
+					variants(product, listing, sellability.availability()), groups(product, groups, optionListings),
+					unsatisfied(product, groups, optionStates)));
+	}
+
+	/**
+	 * Resolves one selection against this offer (Catalog §5.8, Decision AJ2–AJ3): every issue is collected, nothing
+	 * is added or swapped (Decision F).
+	 */
+	public SelectionResult resolve(UUID variantId, List<UUID> optionItemIds) {
+		List<SelectionResult.Issue> issues = new ArrayList<>();
+		AvailabilityState product = this.sellability.availability();
+		if (this.listingState == AvailabilityState.PAUSED) {
+			issues.add(new SelectionResult.Issue(SelectionIssueCode.PRODUCT_PAUSED, null, null));
+		}
+		else if (this.listingState == AvailabilityState.SOLD_OUT || (product == AvailabilityState.SOLD_OUT
+				&& this.unsatisfiedRequiredGroups.isEmpty())) {
+			issues.add(new SelectionResult.Issue(SelectionIssueCode.PRODUCT_SOLD_OUT, null, null));
+		}
+		this.unsatisfiedRequiredGroups.forEach(groupId -> issues.add(new SelectionResult.Issue(
+				SelectionIssueCode.REQUIRED_OPTION_GROUP_UNSATISFIABLE, null, groupId)));
+		OfferedVariant variant = this.variants.stream()
+			.filter(candidate -> candidate.variantId().equals(variantId))
+			.findFirst()
+			.orElse(null);
+		if (variant == null) {
+			issues.add(new SelectionResult.Issue(SelectionIssueCode.VARIANT_NOT_AVAILABLE, null, null));
+		}
+		else if (variant.ownAvailability() != AvailabilityState.AVAILABLE) {
+			issues.add(new SelectionResult.Issue(SelectionIssueCode.VARIANT_SOLD_OUT, null, null));
+		}
+		Map<UUID, OfferedItem> items = new HashMap<>();
+		this.groups.forEach(group -> group.items().forEach(item -> items.put(item.optionItemId(), item)));
+		Set<UUID> chosen = new LinkedHashSet<>(optionItemIds);
+		Map<UUID, AvailabilityState> optionAvailability = new LinkedHashMap<>();
+		long optionsPrice = 0;
+		for (UUID itemId : chosen) {
+			OfferedItem item = items.get(itemId);
+			if (item == null) {
+				issues.add(new SelectionResult.Issue(SelectionIssueCode.OPTION_SELECTION_INVALID, itemId, null));
+				continue;
+			}
+			optionAvailability.put(itemId, item.availability());
+			optionsPrice += item.extraPrice();
+			if (item.availability() != AvailabilityState.AVAILABLE) {
+				issues.add(new SelectionResult.Issue(SelectionIssueCode.OPTION_ITEM_SOLD_OUT, itemId, null));
+			}
+		}
+		List<UUID> normalized = new ArrayList<>();
+		for (OfferedGroup group : this.groups) {
+			int count = 0;
+			for (OfferedItem item : group.items()) {
+				if (optionAvailability.containsKey(item.optionItemId())) {
+					normalized.add(item.optionItemId());
+					count++;
+				}
+			}
+			if (count < group.minSelect() || count > group.maxSelect()) {
+				issues.add(new SelectionResult.Issue(SelectionIssueCode.OPTION_SELECTION_INVALID, null,
+						group.optionGroupId()));
+			}
+		}
+		return new SelectionResult(issues.isEmpty(), List.copyOf(normalized),
+				(variant != null) ? variant.price() + optionsPrice : null, product,
+				(variant != null) ? variant.ownAvailability() : null, Map.copyOf(optionAvailability),
+				List.copyOf(issues));
+	}
+
+	/** Required groups (effective min > 0) without enough sellable items, archived ones included (AH3). */
+	private static List<UUID> unsatisfied(Product product, Map<UUID, OptionGroup> groups,
+			Map<UUID, AvailabilityState> optionStates) {
+		Set<UUID> hidden = product.getOptionItemOverrides()
+			.stream()
+			.filter(ProductOptionItemOverride::isHidden)
+			.map(ProductOptionItemOverride::optionItemId)
+			.collect(Collectors.toSet());
+		return product.getOptionGroups()
+			.stream()
+			.sorted(Comparator.comparingInt(ProductOptionGroupConfig::sortOrder))
+			.filter(config -> groups.containsKey(config.optionGroupId()))
+			.filter(config -> !BranchSellability.requiredGroupSatisfied(config, groups.get(config.optionGroupId()),
+					hidden, optionStates))
+			.map(ProductOptionGroupConfig::optionGroupId)
+			.toList();
 	}
 
 	/**
@@ -50,7 +138,7 @@ public record BranchOffer(BranchSellability sellability, List<OfferedVariant> va
 				Long price = override.map(BranchVariantListing::price).orElse(null);
 				return new OfferedVariant(variant.getId(), variant.getName(),
 						(price != null) ? price : variant.getBasePrice(), variant.isDefault(),
-						(productStopped && state != AvailabilityState.NOT_AVAILABLE) ? productState : state);
+						(productStopped && state != AvailabilityState.NOT_AVAILABLE) ? productState : state, state);
 			})
 			.filter(offered -> offered.availability != AvailabilityState.NOT_AVAILABLE)
 			.toList();
@@ -98,8 +186,12 @@ public record BranchOffer(BranchSellability sellability, List<OfferedVariant> va
 				(state == AvailabilityState.NOT_AVAILABLE) ? AvailabilityState.SOLD_OUT : state);
 	}
 
+	/**
+	 * @param availability as shown: a stopped Product stops the size (AI2)
+	 * @param ownAvailability the size's own state at the Branch, for {@code VARIANT_SOLD_OUT} (AJ2)
+	 */
 	public record OfferedVariant(UUID variantId, String name, long price, boolean isDefault,
-			AvailabilityState availability) {
+			AvailabilityState availability, AvailabilityState ownAvailability) {
 	}
 
 	public record OfferedGroup(UUID optionGroupId, String name, String selectionType, int minSelect, int maxSelect,

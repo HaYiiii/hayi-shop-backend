@@ -78,7 +78,7 @@ public record BranchSellability(AvailabilityState availability, long fromPrice) 
 	}
 
 	/** An optional group never blocks; a required one needs enough sellable items, and is unsatisfied once archived. */
-	private static boolean requiredGroupSatisfied(ProductOptionGroupConfig config, OptionGroup group, Set<UUID> hidden,
+	static boolean requiredGroupSatisfied(ProductOptionGroupConfig config, OptionGroup group, Set<UUID> hidden,
 			Map<UUID, AvailabilityState> optionStates) {
 		int min = config.effectiveMin(group);
 		if (min <= 0) {
