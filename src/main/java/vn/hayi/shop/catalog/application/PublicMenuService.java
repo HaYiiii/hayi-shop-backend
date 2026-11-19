@@ -121,10 +121,10 @@ public class PublicMenuService {
 			.map(PublicMenuService::primaryImage)
 			.flatMap(Optional::stream)
 			.toList());
-		Map<UUID, String> tagSlugs = new HashMap<>();
+		Map<UUID, MenuTag> tagSlugs = new HashMap<>();
 		Set<UUID> tagIds = found.stream().flatMap(product -> product.getTagIds().stream()).collect(Collectors.toSet());
 		if (!tagIds.isEmpty()) {
-			this.tags.findByIdIn(tagIds).forEach(tag -> tagSlugs.put(tag.getId(), tag.getSlug()));
+			this.tags.findByIdIn(tagIds).forEach(tag -> tagSlugs.put(tag.getId(), new MenuTag(tag.getSlug(), tag.getName())));
 		}
 		Map<UUID, List<MenuProduct>> byCategory = new LinkedHashMap<>();
 		found.stream().sorted(MENU_ORDER).forEach(product -> BranchSellability
@@ -145,8 +145,14 @@ public class PublicMenuService {
 		category.children().forEach(child -> collectShown(child, shown));
 	}
 
-	private static List<String> slugs(Product product, Map<UUID, String> tagSlugs) {
-		return product.getTagIds().stream().map(tagSlugs::get).filter(Objects::nonNull).sorted().toList();
+	/** Its Tags by slug (AL3, amended 2026-11-20 to carry the name). */
+	private static List<MenuTag> slugs(Product product, Map<UUID, MenuTag> tags) {
+		return product.getTagIds()
+			.stream()
+			.map(tags::get)
+			.filter(Objects::nonNull)
+			.sorted(Comparator.comparing(MenuTag::slug))
+			.toList();
 	}
 
 	/** {@code ACTIVE} Collections with the Products shown in this menu, in Collection order; empty ones dropped (AL3). */
@@ -305,7 +311,10 @@ public class PublicMenuService {
 	}
 
 	public record MenuProduct(UUID productId, String slug, String name, String primaryImageUrl, long fromPrice,
-			String availability, List<String> tags) {
+			String availability, List<MenuTag> tags) {
+	}
+
+	public record MenuTag(String slug, String name) {
 	}
 
 }
