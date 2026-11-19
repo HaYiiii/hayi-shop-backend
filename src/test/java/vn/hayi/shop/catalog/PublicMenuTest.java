@@ -252,6 +252,144 @@ class PublicMenuTest {
 		assertThat(availability(node(menu("").getContentAsString(), category), product.id)).isEqualTo("SOLD_OUT");
 	}
 
+	// --- product detail (AI) ------------------------------------------------------------------------------------
+
+	@Test
+	void theDetailShowsSizesAndOptionsWithTheirPriceLayers() throws Exception {
+		String category = category(null);
+		Product product = product(category, 45000, 55000);
+		list(product.id);
+		listVariant(product, product.variants.get(1), "{\"price\": 52000, \"availabilityState\": \"AVAILABLE\"}");
+		MockHttpServletResponse created = this.auth.perform(post("/api/backoffice/v1/option-groups")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("""
+					{"code": "%s", "name": "Sữa", "selectionType": "SINGLE", "minSelect": 1, "maxSelect": 1,
+					 "items": [{"code": "TUOI", "name": "Sữa tươi", "defaultExtraPrice": 0, "isDefaultSelected": true},
+					           {"code": "OAT", "name": "Yến mạch", "defaultExtraPrice": 10000},
+					           {"code": "HAT", "name": "Hạnh nhân", "defaultExtraPrice": 12000},
+					           {"code": "AN", "name": "Ẩn", "defaultExtraPrice": 1}]}
+					""".formatted(("mnd-" + UUID.randomUUID().toString().substring(0, 8)).toUpperCase())), this.admin,
+				true);
+		String groupId = JsonPath.read(created.getContentAsString(), "$.optionGroupId");
+		List<String> items = JsonPath.read(created.getContentAsString(), "$.items[*].optionItemId");
+		attach(product.id, groupId);
+		overrides(product.id, """
+				{"overrides": [{"optionItemId": "%s", "extraPriceOverride": 8000, "isHidden": false},
+				               {"optionItemId": "%s", "extraPriceOverride": 11000, "isHidden": false},
+				               {"optionItemId": "%s", "isHidden": true}]}
+				""".formatted(items.get(1), items.get(2), items.get(3)));
+		MockHttpServletResponse branchPrice = this.auth.perform(put("/api/backoffice/v1/branches/" + this.branch
+				+ "/option-item-listings/" + items.get(2))
+			.contentType(MediaType.APPLICATION_JSON)
+			.header("If-Match", "\"v0\"")
+			.content("{\"extraPrice\": 9000}"), this.admin, true);
+		assertThat(branchPrice.getStatus()).as(branchPrice.getContentAsString()).isEqualTo(200);
+		soldOutOption(items.get(0));
+
+		MockHttpServletResponse detail = productDetail(product.id);
+
+		assertThat(detail.getStatus()).as(detail.getContentAsString()).isEqualTo(200);
+		assertThat(detail.getHeader("Cache-Control")).isEqualTo("max-age=30, public");
+		String body = detail.getContentAsString();
+		assertThat(JsonPath.<String>read(body, "$.availability")).isEqualTo("AVAILABLE");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.variants[*].price")).containsExactly(45000, 52000);
+		assertThat(JsonPath.<List<Boolean>>read(body, "$.variants[*].isDefault")).containsExactly(true, false);
+		assertThat(JsonPath.<List<String>>read(body, "$.optionGroups[0].items[*].optionItemId"))
+			.as("the hidden item is not shown")
+			.containsExactly(items.get(0), items.get(1), items.get(2));
+		assertThat(JsonPath.<List<Integer>>read(body, "$.optionGroups[0].items[*].extraPrice"))
+			.as("library, Product override, Branch price")
+			.containsExactly(0, 8000, 9000);
+		assertThat(JsonPath.<Boolean>read(body, "$.optionGroups[0].items[0].isDefaultSelected")).isTrue();
+		assertThat(JsonPath.<String>read(body, "$.optionGroups[0].items[0].availability"))
+			.as("the default is out but stays the default")
+			.isEqualTo("SOLD_OUT");
+		assertThat(JsonPath.<Integer>read(body, "$.optionGroups[0].minSelect")).isEqualTo(1);
+		assertThat(JsonPath.<Object>read(body, "$.sellingSchedule")).isNull();
+
+		String slug = JsonPath.read(body, "$.slug");
+		assertThat(JsonPath.<String>read(productDetail(slug).getContentAsString(), "$.productId"))
+			.isEqualTo(product.id);
+	}
+
+	@Test
+	void aStoppedProductStopsEverySizeAndUnlistedSizesAreHidden() throws Exception {
+		String category = category(null);
+		Product product = product(category, 30000, 40000, 50000);
+		list(product.id);
+		listVariant(product, product.variants.get(2), "{\"price\": null, \"availabilityState\": \"NOT_AVAILABLE\"}");
+		seedListing(product.id, "PAUSED");
+
+		String body = productDetail(product.id).getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.availability")).isEqualTo("PAUSED");
+		assertThat(JsonPath.<List<String>>read(body, "$.variants[*].variantId"))
+			.containsExactly(product.variants.get(0), product.variants.get(1));
+		assertThat(JsonPath.<List<String>>read(body, "$.variants[*].availability")).containsExactly("PAUSED", "PAUSED");
+	}
+
+	@Test
+	void aDerivedSoldOutStopsEverySizeAndArchivedItemsAreHidden() throws Exception {
+		String category = category(null);
+		Group required = group(1, "SINGLE", 2);
+		Product product = product(category, 30000, 40000);
+		attach(product.id, required.id);
+		list(product.id);
+		assertThat(this.auth.perform(post("/api/backoffice/v1/option-groups/" + required.id + "/items/"
+				+ required.items.get(0) + "/archive"), this.admin, true).getStatus()).isEqualTo(200);
+		soldOutOption(required.items.get(1));
+
+		String body = productDetail(product.id).getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.availability")).isEqualTo("SOLD_OUT");
+		assertThat(JsonPath.<List<String>>read(body, "$.variants[*].availability"))
+			.as("the required group has nothing left, so no size can be ordered")
+			.containsExactly("SOLD_OUT", "SOLD_OUT");
+		assertThat(JsonPath.<List<String>>read(body, "$.optionGroups[0].items[*].optionItemId"))
+			.as("the archived item is hidden")
+			.containsExactly(required.items.get(1));
+	}
+
+	@Test
+	void anArchivedGroupIsNotShown() throws Exception {
+		String category = category(null);
+		Group optional = group(0, "SINGLE", 1);
+		Product product = product(category, 10000);
+		attach(product.id, optional.id);
+		list(product.id);
+		assertThat(this.auth.perform(post("/api/backoffice/v1/option-groups/" + optional.id + "/archive"), this.admin,
+				true).getStatus()).isEqualTo(200);
+
+		String body = productDetail(product.id).getContentAsString();
+
+		assertThat(JsonPath.<List<Object>>read(body, "$.optionGroups")).isEmpty();
+		assertThat(JsonPath.<String>read(body, "$.availability")).as("the group was optional").isEqualTo("AVAILABLE");
+	}
+
+	@Test
+	void aProductNotOnTheMenuIsNotFound() throws Exception {
+		String category = category(null);
+		Product unlisted = product(category, 10000);
+		Product draft = draft(category, 10000);
+		list(draft.id);
+		Product listed = product(category, 10000);
+		list(listed.id);
+
+		assertProblem(productDetail(unlisted.id), 404, "CATALOG_PRODUCT_NOT_FOUND");
+		assertProblem(productDetail(draft.id), 404, "CATALOG_PRODUCT_NOT_FOUND");
+		assertProblem(productDetail("khong-co-mon-nay"), 404, "CATALOG_PRODUCT_NOT_FOUND");
+		assertProblem(productDetail(UUID.randomUUID().toString()), 404, "CATALOG_PRODUCT_NOT_FOUND");
+		assertProblem(this.mvc.perform(get("/api/public/v1/branches/" + branch(false) + "/products/" + listed.id))
+			.andReturn()
+			.getResponse(), 404, "BRANCH_NOT_FOUND");
+	}
+
+	private MockHttpServletResponse productDetail(String idOrSlug) throws Exception {
+		return this.mvc.perform(get("/api/public/v1/branches/" + this.branch + "/products/" + idOrSlug))
+			.andReturn()
+			.getResponse();
+	}
+
 	// --- helpers ------------------------------------------------------------------------------------------------
 
 	record Product(String id, List<String> variants) {

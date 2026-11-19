@@ -23,7 +23,10 @@ import org.springframework.transaction.annotation.Transactional;
 import vn.hayi.shop.branch.api.BranchDirectory;
 import vn.hayi.shop.catalog.domain.AvailabilityState;
 import vn.hayi.shop.catalog.domain.BranchListingRepository;
+import vn.hayi.shop.catalog.domain.BranchOffer;
+import vn.hayi.shop.catalog.domain.BranchOptionItemListing;
 import vn.hayi.shop.catalog.domain.BranchOptionItemListingRepository;
+import vn.hayi.shop.catalog.domain.CatalogErrorCode;
 import vn.hayi.shop.catalog.domain.BranchProductListing;
 import vn.hayi.shop.catalog.domain.BranchSellability;
 import vn.hayi.shop.catalog.domain.Category;
@@ -36,6 +39,7 @@ import vn.hayi.shop.catalog.domain.ProductImage;
 import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
 import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
+import vn.hayi.shop.shared.error.DomainException;
 
 /**
  * The menu customers see at one Branch (API 02 §2, Catalog §5.6, Decision F, W3, W6, AH): read on each request
@@ -111,6 +115,82 @@ public class PublicMenuService {
 						primaryImage(product).map(imageUrls::get).orElse(null), sellability.fromPrice(),
 						sellability.availability().name()))));
 		return new Menu(branchId, evaluatedAt, tree(byCategory));
+	}
+
+	/**
+	 * One menu Product in detail (Decision AI): a UUID is an id, anything else a slug.
+	 * @throws vn.hayi.shop.shared.error.DomainException {@code BRANCH_NOT_FOUND}, or {@code CATALOG_PRODUCT_NOT_FOUND}
+	 * unless the Product is on the Branch's menu (AH1)
+	 */
+	@Transactional(readOnly = true)
+	public ProductDetail product(UUID branchId, String productIdOrSlug) {
+		this.branches.requireActive(branchId);
+		Optional<Product> found = asUuid(productIdOrSlug).map(this.products::findById)
+			.orElseGet(() -> this.products.findBySlug(productIdOrSlug));
+		Product product = found.orElseThrow(() -> notFound(productIdOrSlug));
+		BranchProductListing listing = this.listings.findByBranchIdAndProductId(branchId, product.getId())
+			.orElse(null);
+		Map<UUID, BranchOptionItemListing> optionListings = new HashMap<>();
+		this.optionListings.findByIdBranchId(branchId)
+			.forEach(option -> optionListings.put(option.getOptionItemId(), option));
+		BranchOffer offer = BranchOffer.of(product, listing, groupsOf(List.of(product)), optionListings)
+			.orElseThrow(() -> notFound(productIdOrSlug));
+		List<ProductImage> productImages = product.getImages();
+		Map<UUID, String> urls = this.images
+			.urls(productImages.stream().map(ProductImage::getStoredObjectId).toList());
+		return new ProductDetail(product.getId(), product.getSlug(), product.getName(), product.getDescription(),
+				productImages.stream()
+					.map(image -> new DetailImage(urls.get(image.getStoredObjectId()), image.getAltText(),
+							image.isPrimary()))
+					.toList(),
+				offer.sellability().availability().name(),
+				offer.variants()
+					.stream()
+					.map(variant -> new DetailVariant(variant.variantId(), variant.name(), variant.price(),
+							variant.isDefault(), variant.availability().name()))
+					.toList(),
+				offer.groups()
+					.stream()
+					.map(group -> new DetailGroup(group.optionGroupId(), group.name(), group.selectionType(),
+							group.minSelect(), group.maxSelect(),
+							group.items()
+								.stream()
+								.map(item -> new DetailItem(item.optionItemId(), item.name(), item.extraPrice(),
+										item.isDefaultSelected(), item.availability().name()))
+								.toList()))
+					.toList());
+	}
+
+	public record DetailVariant(UUID variantId, String name, long price, boolean isDefault, String availability) {
+	}
+
+	public record DetailGroup(UUID optionGroupId, String name, String selectionType, int minSelect, int maxSelect,
+			List<DetailItem> items) {
+	}
+
+	public record DetailItem(UUID optionItemId, String name, long extraPrice, boolean isDefaultSelected,
+			String availability) {
+	}
+
+	private static Optional<UUID> asUuid(String value) {
+		try {
+			return Optional.of(UUID.fromString(value));
+		}
+		catch (IllegalArgumentException ex) {
+			return Optional.empty();
+		}
+	}
+
+	private static DomainException notFound(String productIdOrSlug) {
+		return new DomainException(CatalogErrorCode.CATALOG_PRODUCT_NOT_FOUND,
+				"No Product " + productIdOrSlug + " on this menu");
+	}
+
+	public record ProductDetail(UUID productId, String slug, String name, String description, List<DetailImage> images,
+			String availability, List<DetailVariant> variants, List<DetailGroup> optionGroups) {
+	}
+
+	public record DetailImage(String url, String altText, boolean isPrimary) {
 	}
 
 	/** {@code ACTIVE} Categories that hold a menu Product themselves or in a child, by {@code sortOrder} (AH1). */

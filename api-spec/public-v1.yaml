@@ -55,6 +55,40 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /branches/{branchId}/products/{productIdOrSlug}:
+    get:
+      tags: [PublicMenu]
+      operationId: getBranchProduct
+      summary: One menu Product of an ACTIVE Branch in detail
+      description: |
+        No sign-in (Decision AI). A UUID is the Product id, anything else its slug. Not on the Branch's menu (AH1) →
+        `404 CATALOG_PRODUCT_NOT_FOUND`; Branch unknown or not `ACTIVE` → `404 BRANCH_NOT_FOUND`. Variant prices
+        include the Branch price; option prices take the first of Branch → Product override → library price; items
+        hidden on the Product do not appear. A default option that is out keeps `isDefaultSelected` (no silent
+        substitute, Decision F). `Cache-Control: public, max-age=30`.
+      security: []
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productIdOrSlug
+          in: path
+          required: true
+          schema: { type: string, maxLength: 160 }
+      responses:
+        '200':
+          description: The Product.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/ThirtySecondCache' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicProductDetail' }
+        '404':
+          description: '`BRANCH_NOT_FOUND` or `CATALOG_PRODUCT_NOT_FOUND`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /branches:
     get:
       tags: [PublicBranches]
@@ -212,6 +246,66 @@ components:
         productIds:
           type: array
           items: { type: string, format: uuid }
+    DetailImage:
+      type: object
+      required: [url, altText, isPrimary]
+      properties:
+        url: { type: [string, 'null'] }
+        altText: { type: [string, 'null'] }
+        isPrimary: { type: boolean }
+    DetailVariant:
+      type: object
+      required: [variantId, name, price, isDefault, availability]
+      properties:
+        variantId: { type: string, format: uuid }
+        name: { type: string }
+        price: { type: integer, format: int64, description: 'VND, Branch price applied.' }
+        isDefault: { type: boolean }
+        availability: { $ref: '#/components/schemas/MenuAvailability' }
+    DetailOptionItem:
+      type: object
+      required: [optionItemId, name, extraPrice, isDefaultSelected, availability]
+      properties:
+        optionItemId: { type: string, format: uuid }
+        name: { type: string }
+        extraPrice: { type: integer, format: int64, description: 'VND: Branch, else Product override, else library.' }
+        isDefaultSelected: { type: boolean }
+        availability: { $ref: '#/components/schemas/MenuAvailability' }
+    DetailOptionGroup:
+      type: object
+      required: [optionGroupId, name, selectionType, minSelect, maxSelect, items]
+      properties:
+        optionGroupId: { type: string, format: uuid }
+        name: { type: string }
+        selectionType: { type: string, enum: [SINGLE, MULTIPLE] }
+        minSelect: { type: integer, format: int32 }
+        maxSelect: { type: integer, format: int32 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DetailOptionItem' }
+    PublicProductDetail:
+      type: object
+      required: [productId, slug, name, description, images, availability, variants, optionGroups, sellingSchedule]
+      properties:
+        productId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/DetailImage' }
+        availability: { $ref: '#/components/schemas/MenuAvailability' }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/DetailVariant' }
+        optionGroups:
+          type: array
+          items: { $ref: '#/components/schemas/DetailOptionGroup' }
+        sellingSchedule:
+          type: [object, 'null']
+          description: '`null` until BE #70.'
+          properties:
+            summary: { type: string }
     PublicMenu:
       type: object
       required: [branchId, evaluatedAt, categories, collections]
