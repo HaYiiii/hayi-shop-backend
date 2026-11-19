@@ -32,6 +32,9 @@ spring:
       lifecycle-management: start-only
 
 server:
+  # Never let Tomcat rewrite remoteAddr from X-Forwarded-*: ClientIpResolver reads it only behind
+  # hayi.rate-limit.public.trusted-proxies (Decision W9). Boot would switch to NATIVE on Kubernetes otherwise.
+  forward-headers-strategy: none
   error:
     include-stacktrace: never
     include-message: never
@@ -57,7 +60,13 @@ hayi:
   security:
     signing-key: ${HAYI_SECURITY_SIGNING_KEY:}   # ES256 private JWK (JSON); never committed
     mfa-encryption-key: ${HAYI_SECURITY_MFA_ENCRYPTION_KEY:}   # AES-256 key (base64) for TOTP secrets (Decision L3)
-  storage:                                       # S3-compatible object storage (Decision H5, AF4)
+  rate-limit:
+    public:                                      # per IP per minute on /api/public/v1 (Decision W9)
+      get-per-minute: ${HAYI_RATE_LIMIT_PUBLIC_GET:120}
+      resolve-per-minute: ${HAYI_RATE_LIMIT_PUBLIC_RESOLVE:30}
+      trusted-proxies: ${HAYI_RATE_LIMIT_TRUSTED_PROXIES:}   # comma-separated IPs/CIDRs whose X-Forwarded-For is believed
+      max-tracked-clients: ${HAYI_RATE_LIMIT_MAX_TRACKED:100000}   # in-memory counters per instance, LRU above it
+  storage:                                      # S3-compatible object storage (Decision H5, AF4)
     endpoint: ${HAYI_STORAGE_ENDPOINT:http://localhost:8333}   # local SeaweedFS (compose.yaml)
     region: ${HAYI_STORAGE_REGION:us-east-1}
     access-key: ${HAYI_STORAGE_ACCESS_KEY:}      # blank → SDK default chain; local dev: docker/seaweedfs/s3.json

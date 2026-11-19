@@ -41,6 +41,7 @@ paths:
           description: When the order would be fulfilled; malformed → `400`.
           schema: { type: string, format: date-time }
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: The menu.
           headers:
@@ -81,6 +82,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ResolveRequest' }
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: Each line resolved.
           content:
@@ -118,6 +120,7 @@ paths:
           required: true
           schema: { type: string, maxLength: 160 }
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: The Product.
           headers:
@@ -141,6 +144,7 @@ paths:
         (N5, U4). `Cache-Control: public, max-age=300`.
       security: []
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: The ACTIVE Branches.
           headers:
@@ -163,6 +167,7 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: The Branch.
           headers:
@@ -216,6 +221,7 @@ paths:
           description: Items the customer intends to order, checked against `maxItems` (T5).
           schema: { type: integer, format: int32, minimum: 1, maximum: 500 }
       responses:
+        '429': { $ref: '#/components/responses/RateLimited' }
         '200':
           description: The days asked for, each with its slots.
           headers:
@@ -236,6 +242,16 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 components:
+  responses:
+    RateLimited:
+      description: '`RATE_LIMITED`: over the per-IP limit (Decision W9: `GET` 120/min, resolve 30/min).'
+      headers:
+        Retry-After:
+          description: Seconds until the window resets.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
   headers:
     FiveMinuteCache:
       description: '`public, max-age=300` (API 02, Decision U1).'
