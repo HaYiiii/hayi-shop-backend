@@ -6,6 +6,10 @@
         { "accessKey": "hayi_s3_dev", "secretKey": "hayi_s3_dev_secret" }
       ],
       "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "anonymous",
+      "actions": ["Read:hayi-public", "Read:hayi-public-test"]
     }
   ]
 }
