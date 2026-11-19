@@ -6,8 +6,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +27,7 @@ import com.jayway.jsonpath.JsonPath;
 import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
+import vn.hayi.shop.catalog.api.CatalogSelectionResolver;
 import vn.hayi.shop.identity.BackofficeAuth;
 import vn.hayi.shop.identity.BackofficeAuth.Session;
 import vn.hayi.shop.identity.IdentityFixtures;
@@ -382,6 +385,196 @@ class PublicMenuTest {
 		assertProblem(this.mvc.perform(get("/api/public/v1/branches/" + branch(false) + "/products/" + listed.id))
 			.andReturn()
 			.getResponse(), 404, "BRANCH_NOT_FOUND");
+	}
+
+	// --- resolve (AJ) ------------------------------------------------------------------------------------------
+
+	@Test
+	void aValidLineIsPricedServerSideWithItsNormalizedSelection() throws Exception {
+		String category = category(null);
+		Product product = product(category, 40000, 50000);
+		list(product.id);
+		listVariant(product, product.variants.get(0), "{\"price\": 42000, \"availabilityState\": \"AVAILABLE\"}");
+		Group milk = group(1, "SINGLE", 2);
+		attach(product.id, milk.id);
+		overrides(product.id, "{\"overrides\": [{\"optionItemId\": \"" + milk.items.get(1)
+				+ "\", \"extraPriceOverride\": 8000, \"isHidden\": false}]}");
+
+		MockHttpServletResponse response = resolve(line("a", product.id, product.variants.get(0), 2, milk.items.get(1),
+				milk.items.get(1)));
+
+		assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
+		assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+		String body = response.getContentAsString();
+		assertThat(JsonPath.<Boolean>read(body, "$.lines[0].valid")).isTrue();
+		assertThat(JsonPath.<String>read(body, "$.lines[0].ref")).isEqualTo("a");
+		assertThat(JsonPath.<List<String>>read(body, "$.lines[0].normalizedOptionItemIds"))
+			.as("repeats dropped")
+			.containsExactly(milk.items.get(1));
+		assertThat(JsonPath.<Integer>read(body, "$.lines[0].unitPrice")).as("Branch size price + Product override")
+			.isEqualTo(50000);
+		assertThat(JsonPath.<Integer>read(body, "$.lines[0].lineTotal")).isEqualTo(100000);
+		assertThat(JsonPath.<List<Object>>read(body, "$.lines[0].issues")).isEmpty();
+		assertThat(JsonPath.<String>read(body, "$.fingerprint")).hasSize(64);
+	}
+
+	@Test
+	void everyIssueOfALineIsReportedWithoutSubstitution() throws Exception {
+		String category = category(null);
+		Product product = product(category, 40000, 50000);
+		Product other = product(category, 10000);
+		list(product.id);
+		Group milk = group(1, "SINGLE", 2);
+		Group stray = group(0, "SINGLE", 1);
+		attach(product.id, milk.id);
+		listVariant(product, product.variants.get(1), "{\"price\": 50000, \"availabilityState\": \"AVAILABLE\"}");
+		seedVariant(product, product.variants.get(1), "SOLD_OUT");
+		soldOutOption(milk.items.get(0));
+
+		String body = resolve(
+				line("unknown", UUID.randomUUID().toString(), UUID.randomUUID().toString(), 1),
+				line("none", product.id, product.variants.get(0), 1),
+				line("two", product.id, product.variants.get(0), 1, milk.items.get(0), milk.items.get(1)),
+				line("out", product.id, product.variants.get(0), 1, milk.items.get(0)),
+				line("stray", product.id, product.variants.get(0), 1, milk.items.get(1), stray.items.get(0)),
+				line("size", product.id, other.variants.get(0), 1, milk.items.get(1)),
+				line("sizeOut", product.id, product.variants.get(1), 1, milk.items.get(1)))
+			.getContentAsString();
+
+		assertThat(issues(body, "unknown")).containsExactly("PRODUCT_NOT_FOUND");
+		assertThat(JsonPath.<List<Object>>read(body, "$.lines[0].unitPrice")).isNull();
+		assertThat(issues(body, "none")).as("no default is added").containsExactly("OPTION_SELECTION_INVALID");
+		assertThat(issueTargets(body, "none", "optionGroupId")).containsExactly(milk.id);
+		assertThat(issues(body, "two")).containsExactly("OPTION_ITEM_SOLD_OUT", "OPTION_SELECTION_INVALID");
+		assertThat(issues(body, "out")).containsExactly("OPTION_ITEM_SOLD_OUT");
+		assertThat(issueTargets(body, "out", "optionItemId")).containsExactly(milk.items.get(0));
+		assertThat(issues(body, "stray")).containsExactly("OPTION_SELECTION_INVALID");
+		assertThat(issueTargets(body, "stray", "optionItemId")).containsExactly(stray.items.get(0));
+		assertThat(issues(body, "size")).containsExactly("VARIANT_NOT_AVAILABLE");
+		assertThat(JsonPath.<List<Object>>read(body, "$.lines[?(@.ref == 'size')].unitPrice")).containsExactly(
+				(Object) null);
+		assertThat(issues(body, "sizeOut")).containsExactly("VARIANT_SOLD_OUT");
+		assertThat(JsonPath.<List<Boolean>>read(body, "$.lines[*].valid")).containsOnly(false);
+	}
+
+	@Test
+	void stoppedProductsAndUnsatisfiableGroupsAreReported() throws Exception {
+		String category = category(null);
+		Product paused = product(category, 10000);
+		Product soldOut = product(category, 10000);
+		Product unsatisfiable = product(category, 10000);
+		Group required = group(1, "SINGLE", 1);
+		attach(unsatisfiable.id, required.id);
+		list(paused.id);
+		list(soldOut.id);
+		list(unsatisfiable.id);
+		seedListing(paused.id, "PAUSED");
+		seedListing(soldOut.id, "SOLD_OUT");
+		soldOutOption(required.items.getFirst());
+
+		Product sizesOut = product(category, 20000);
+		list(sizesOut.id);
+		listVariant(sizesOut, sizesOut.variants.getFirst(), "{\"price\": 20000, \"availabilityState\": \"AVAILABLE\"}");
+		seedVariant(sizesOut, sizesOut.variants.getFirst(), "SOLD_OUT");
+
+		String body = resolve(line("p", paused.id, paused.variants.getFirst(), 1),
+				line("s", soldOut.id, soldOut.variants.getFirst(), 1),
+				line("u", unsatisfiable.id, unsatisfiable.variants.getFirst(), 1, required.items.getFirst()),
+				line("d", sizesOut.id, sizesOut.variants.getFirst(), 1))
+			.getContentAsString();
+
+		assertThat(issues(body, "p")).containsExactly("PRODUCT_PAUSED");
+		assertThat(issues(body, "s")).containsExactly("PRODUCT_SOLD_OUT");
+		assertThat(issues(body, "d")).as("every shown size stopped, listing still AVAILABLE")
+			.containsExactly("PRODUCT_SOLD_OUT", "VARIANT_SOLD_OUT");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.lines[?(@.ref == 'd')].unitPrice")).containsExactly(20000);
+		assertThat(issues(body, "u")).containsExactly("REQUIRED_OPTION_GROUP_UNSATISFIABLE", "OPTION_ITEM_SOLD_OUT");
+		assertThat(issueTargets(body, "u", "optionGroupId")).contains(required.id);
+		assertThat(JsonPath.<List<Integer>>read(body, "$.lines[?(@.ref == 'p')].unitPrice")).as("still priced")
+			.containsExactly(10000);
+	}
+
+	@Test
+	void theFingerprintChangesWhenAPriceChanges() throws Exception {
+		String category = category(null);
+		Product product = product(category, 10000);
+		list(product.id);
+		String request = line("a", product.id, product.variants.getFirst(), 1);
+
+		String before = JsonPath.read(resolve(request).getContentAsString(), "$.fingerprint");
+		String same = JsonPath.read(resolve(request).getContentAsString(), "$.fingerprint");
+		listVariant(product, product.variants.getFirst(), "{\"price\": 11000, \"availabilityState\": \"AVAILABLE\"}");
+		String after = JsonPath.read(resolve(request).getContentAsString(), "$.fingerprint");
+
+		assertThat(same).isEqualTo(before);
+		assertThat(after).isNotEqualTo(before);
+	}
+
+	@Test
+	void theRequestIsBoundedAndTheBranchMustBeActive() throws Exception {
+		String one = line("a", UUID.randomUUID().toString(), UUID.randomUUID().toString(), 1);
+		String[] fiftyOne = new String[51];
+		Arrays.fill(fiftyOne, one);
+
+		assertThat(resolve(fiftyOne).getStatus()).isEqualTo(400);
+		assertThat(resolve(line("a", UUID.randomUUID().toString(), UUID.randomUUID().toString(), 0)).getStatus())
+			.isEqualTo(400);
+		assertThat(resolve().getStatus()).as("at least one line").isEqualTo(400);
+		assertProblem(this.mvc.perform(post("/api/public/v1/branches/" + branch(false) + "/catalog/resolve")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"lines\": [" + one + "]}")).andReturn().getResponse(), 404, "BRANCH_NOT_FOUND");
+	}
+
+	@Autowired
+	CatalogSelectionResolver resolver;
+
+	@Test
+	void thePortReportsAvailabilityAtEveryLevel() throws Exception {
+		String category = category(null);
+		Product product = product(category, 10000);
+		list(product.id);
+		Group milk = group(0, "MULTIPLE", 2);
+		attach(product.id, milk.id);
+		soldOutOption(milk.items.get(1));
+
+		var resolved = this.resolver.resolve(UUID.fromString(this.branch),
+				List.of(new CatalogSelectionResolver.SelectionRequest("a",
+						UUID.fromString(product.id), UUID.fromString(product.variants.getFirst()),
+						List.of(UUID.fromString(milk.items.get(1))), 1)),
+				null);
+
+		var line = resolved.lines().getFirst();
+		assertThat(line.productAvailability())
+			.isEqualTo(CatalogSelectionResolver.Availability.AVAILABLE);
+		assertThat(line.variantAvailability())
+			.isEqualTo(CatalogSelectionResolver.Availability.AVAILABLE);
+		assertThat(line.optionAvailability()).containsEntry(UUID.fromString(milk.items.get(1)),
+				CatalogSelectionResolver.Availability.SOLD_OUT);
+		assertThat(line.valid()).isFalse();
+	}
+
+	private static String line(String ref, String productId, String variantId, int quantity, String... items) {
+		StringBuilder ids = new StringBuilder();
+		for (int i = 0; i < items.length; i++) {
+			ids.append((i > 0) ? ", " : "").append('"').append(items[i]).append('"');
+		}
+		return "{\"ref\": \"%s\", \"productId\": \"%s\", \"variantId\": \"%s\", \"optionItemIds\": [%s], \"quantity\": %d}"
+			.formatted(ref, productId, variantId, ids, quantity);
+	}
+
+	private MockHttpServletResponse resolve(String... lines) throws Exception {
+		return this.mvc.perform(post("/api/public/v1/branches/" + this.branch + "/catalog/resolve")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"lines\": [" + String.join(", ", lines) + "]}")).andReturn().getResponse();
+	}
+
+	private static List<String> issues(String body, String ref) {
+		return JsonPath.read(body, "$.lines[?(@.ref == '" + ref + "')].issues[*].code");
+	}
+
+	private static List<String> issueTargets(String body, String ref, String field) {
+		List<String> targets = JsonPath.read(body, "$.lines[?(@.ref == '" + ref + "')].issues[*]." + field);
+		return targets.stream().filter(Objects::nonNull).toList();
 	}
 
 	private MockHttpServletResponse productDetail(String idOrSlug) throws Exception {

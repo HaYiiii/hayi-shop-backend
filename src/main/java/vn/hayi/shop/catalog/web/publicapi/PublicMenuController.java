@@ -10,6 +10,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import vn.hayi.shop.catalog.api.CatalogSelectionResolver;
 import vn.hayi.shop.catalog.application.PublicMenuService;
 import vn.hayi.shop.platform.web.spec.publicapi.api.PublicMenuApi;
 import vn.hayi.shop.platform.web.spec.publicapi.model.DetailImageDto;
@@ -18,6 +19,11 @@ import vn.hayi.shop.platform.web.spec.publicapi.model.DetailOptionItemDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.DetailVariantDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuAvailabilityDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.PublicProductDetailDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveIssueCodeDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveIssueDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveLineDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveRequestDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveResponseDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuCategoryDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuProductDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.PublicMenuDto;
@@ -30,8 +36,11 @@ class PublicMenuController implements PublicMenuApi {
 
 	private final PublicMenuService menus;
 
-	PublicMenuController(PublicMenuService menus) {
+	private final CatalogSelectionResolver resolver;
+
+	PublicMenuController(PublicMenuService menus, CatalogSelectionResolver resolver) {
 		this.menus = menus;
+		this.resolver = resolver;
 	}
 
 	@Override
@@ -41,6 +50,32 @@ class PublicMenuController implements PublicMenuApi {
 			.cacheControl(THIRTY_SECONDS)
 			.body(new PublicMenuDto(menu.branchId(), menu.evaluatedAt().atOffset(ZoneOffset.UTC),
 					menu.categories().stream().map(PublicMenuController::toDto).toList(), List.of()));
+	}
+
+	/** Writes nothing and is never cached: a cart's prices and states are read fresh (Decision AJ4). */
+	@Override
+	public ResponseEntity<ResolveResponseDto> resolveCatalog(UUID branchId, ResolveRequestDto body) {
+		CatalogSelectionResolver.ResolvedSelections resolved = this.resolver.resolve(branchId,
+				body.getLines()
+					.stream()
+					.map(line -> new CatalogSelectionResolver.SelectionRequest(line.getRef(), line.getProductId(),
+							line.getVariantId(), (line.getOptionItemIds() != null) ? line.getOptionItemIds() : List.of(),
+							line.getQuantity()))
+					.toList(),
+				(body.getAt() != null) ? body.getAt().toInstant() : null);
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noStore())
+			.body(new ResolveResponseDto(resolved.lines()
+				.stream()
+				.map(line -> new ResolveLineDto(line.ref(), line.valid(), line.normalizedOptionItemIds(),
+						line.unitPrice(), line.lineTotal(),
+						line.issues()
+							.stream()
+							.map(issue -> new ResolveIssueDto(ResolveIssueCodeDto.valueOf(issue.code().name()))
+								.optionItemId(issue.optionItemId())
+								.optionGroupId(issue.optionGroupId()))
+							.toList()))
+				.toList(), resolved.fingerprint()));
 	}
 
 	@Override
