@@ -44,6 +44,8 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageOrderRequestD
 import vn.hayi.shop.platform.web.spec.backoffice.model.SellingScheduleDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.SellingSchedulesReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.SellingWindowDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.ProductTagsRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.TagDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupsReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionItemOverrideDto;
@@ -211,6 +213,17 @@ class BackofficeProductController implements ProductsApi {
 			.toList(), expected, client()));
 	}
 
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> replaceProductTags(UUID productId, ProductTagsRequestDto body, String ifMatch,
+			String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		if (new HashSet<>(body.getTagIds()).size() != body.getTagIds().size()) {
+			throw duplicate("tagIds");
+		}
+		return withETag(this.products.replaceTags(productId, body.getTagIds(), expected, client()));
+	}
+
 	private boolean hasPricePermission() {
 		return this.permissions.evaluate(AuthenticatedSession.require().userId(), Permission.CATALOG_PRICE_MANAGE,
 				Optional.empty()) == AccessDecision.GRANTED;
@@ -361,6 +374,9 @@ class BackofficeProductController implements ProductsApi {
 								.map(window -> new SellingWindowDto(window.dayOfWeek(), hhMm(window.start()),
 										hhMm(window.end())))
 								.toList()))
+					.toList(),
+				product.tags().stream()
+					.map(tag -> new TagDto(tag.tagId(), tag.slug(), tag.name(), utc(tag.createdAt())))
 					.toList());
 	}
 

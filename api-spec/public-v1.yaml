@@ -26,7 +26,9 @@ paths:
         Category; only `ACTIVE` Categories that hold such a Product (themselves or a child). `fromPrice` and
         `availability` follow Decision AH2–AH3; outside the selling schedule at `at` (ISO instant, default now,
         `Asia/Ho_Chi_Minh`) a Product is `OUTSIDE_SELLING_HOURS`, after `PAUSED` and `SOLD_OUT` (AK2–AK3). `at` is echoed
-        as `evaluatedAt`; tags and collections come with BE #71. `Cache-Control: public, max-age=30`.
+        as `evaluatedAt`. `collections` holds only `ACTIVE` Collections (by `sortOrder` then name) with the Products shown in
+        this menu in Collection order, and drops one with none; `tags` are slugs, sorted (Decision AL3).
+        `Cache-Control: public, max-age=30`.
       security: []
       parameters:
         - name: branchId

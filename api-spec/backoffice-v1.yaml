@@ -24,6 +24,10 @@ tags:
     description: How and when a Branch takes orders, per fulfillment type (Fulfillment §8, API 09 §2)
   - name: Categories
     description: The brand-level menu taxonomy, at most 2 levels (Catalog §5.3, API 08 §1.2, Decision Y)
+  - name: Collections
+    description: Curated, flat groupings of Products in order (Catalog §5.3, API 08 §1.10, Decision AL1)
+  - name: Tags
+    description: Flexible labels for Products (Catalog §5.3, API 08 §1.10, Decision AL2)
   - name: Products
     description: Brand-level Products and their Variants (Catalog §5.2, API 08 §1.3, Decision Z)
   - name: OptionGroups
@@ -973,6 +977,239 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/CategoryConflict' }
         '412': { $ref: '#/components/responses/VersionConflict' }
+  /collections:
+    get:
+      tags: [Collections]
+      operationId: listCollections
+      summary: The Collections
+      description: |
+        `CATALOG_VIEW` (brand-level). Sorted by `sortOrder` then name; without `ARCHIVED` unless
+        `includeArchived=true` (Decision AL1).
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The Collections.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Collections]
+      operationId: createCollection
+      summary: Create an ACTIVE Collection, last in order
+      description: |
+        `CATALOG_MANAGE`. `slug` is unique among every Collection, archived ones included → `409 CATALOG_SLUG_TAKEN`
+        (Decision AL1). Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CollectionCreateRequest' }
+      responses:
+        '201':
+          description: The created Collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: URL of the new Collection.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
+  /collections/{collectionId}:
+    parameters:
+      - $ref: '#/components/parameters/CollectionId'
+    get:
+      tags: [Collections]
+      operationId: getCollection
+      summary: One Collection
+      description: '`CATALOG_VIEW`. Archived ones too. Unknown → `404 CATALOG_COLLECTION_NOT_FOUND`.'
+      responses:
+        '200':
+          description: The Collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Collections]
+      operationId: updateCollection
+      summary: Edit a Collection
+      description: |
+        `CATALOG_MANAGE`. JSON Merge Patch on `name`, `slug`, `description` (`null` clears), `sortOrder` (≥ 0) and
+        `status` (`ACTIVE` or `INACTIVE`); any other key → `400` (Decision AL1). An archived Collection →
+        `409 CATALOG_COLLECTION_ARCHIVED`. Requires `If-Match` (missing → `428`, stale → `412`). Changed fields are
+        audited; a patch that changes nothing keeps the version. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/CollectionPatch' }
+      responses:
+        '200':
+          description: The Collection after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /collections/{collectionId}/products:
+    parameters:
+      - $ref: '#/components/parameters/CollectionId'
+    put:
+      tags: [Collections]
+      operationId: replaceCollectionProducts
+      summary: Set the Products of a Collection, in order
+      description: |
+        `CATALOG_MANAGE`. Replaces every Product (≤ 200, a repeat → `400`) in the given order (Decision AL1). Unknown
+        Product → `404 CATALOG_PRODUCT_NOT_FOUND`, archived → `409 CATALOG_PRODUCT_ARCHIVED`; archived Collection →
+        `409 CATALOG_COLLECTION_ARCHIVED`. Requires `If-Match`; no change keeps the version. Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CollectionProductsRequest' }
+      responses:
+        '200':
+          description: The Collection after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /collections/{collectionId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/CollectionId'
+    post:
+      tags: [Collections]
+      operationId: archiveCollection
+      summary: Archive a Collection for good
+      description: |
+        `CATALOG_MANAGE`. `ACTIVE`/`INACTIVE → ARCHIVED`, no way back (Decision AL1). Already archived →
+        `409 CATALOG_COLLECTION_ARCHIVED`. Optional `If-Match`. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The archived Collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /tags:
+    get:
+      tags: [Tags]
+      operationId: listTags
+      summary: Every Tag, by slug
+      description: '`CATALOG_VIEW` (brand-level, Decision AL2).'
+      responses:
+        '200':
+          description: The Tags.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Tags]
+      operationId: createTag
+      summary: Create a Tag
+      description: |
+        `CATALOG_MANAGE`. `slug` unique → `409 CATALOG_SLUG_TAKEN` (Decision AL2). Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagCreateRequest' }
+      responses:
+        '201':
+          description: The created Tag.
+          headers:
+            Location:
+              description: URL of the new Tag.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tag' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
+  /tags/{tagId}:
+    parameters:
+      - $ref: '#/components/parameters/TagId'
+    patch:
+      tags: [Tags]
+      operationId: updateTag
+      summary: Rename a Tag or change its slug
+      description: |
+        `CATALOG_MANAGE`. JSON Merge Patch on `name` and `slug`; any other key → `400`. No `If-Match`: a Tag has no
+        version, last write wins (Decision AL2). Unknown → `404 CATALOG_TAG_NOT_FOUND`; slug taken →
+        `409 CATALOG_SLUG_TAKEN`. Audited when something changes. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/TagPatch' }
+      responses:
+        '200':
+          description: The Tag after the edit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tag' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CollectionConflict' }
   /products:
     get:
       tags: [Products]
@@ -1462,6 +1699,40 @@ paths:
         '409': { $ref: '#/components/responses/ProductOptionConflict' }
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/ProductOptionRuleViolated' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /products/{productId}/tags:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      tags: [Products]
+      operationId: replaceProductTags
+      summary: Set the Tags of a Product
+      description: |
+        `CATALOG_MANAGE` (Decision AL2). Replaces every Tag (≤ 20, a repeat → `400`). Unknown Tag →
+        `404 CATALOG_TAG_NOT_FOUND`; archived Product → `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Requires `If-Match`;
+        a change bumps the Product version, no change keeps it. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductTagsRequest' }
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
   /products/{productId}/selling-schedules:
     parameters:
@@ -2071,6 +2342,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    CollectionId:
+      name: collectionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     VariantId:
       name: variantId
       in: path
@@ -2275,7 +2556,7 @@ components:
       type: object
       required: [productId, productCode, slug, name, productType, status, primaryCategoryId, shortDescription,
         description, sortOrder, archivedAt, createdAt, updatedAt, version, variants, optionGroups, optionItemOverrides,
-        images, sellingSchedules]
+        images, sellingSchedules, tags]
       properties:
         productId: { type: string, format: uuid }
         productCode: { type: string }
@@ -2308,6 +2589,10 @@ components:
           type: array
           description: Empty = sold at any time (Decision AK1).
           items: { $ref: '#/components/schemas/SellingSchedule' }
+        tags:
+          type: array
+          description: By slug (Decision AL2).
+          items: { $ref: '#/components/schemas/Tag' }
     SellingWindow:
       type: object
       required: [dayOfWeek, start, end]
@@ -2660,6 +2945,101 @@ components:
           description: |
             An `ACTIVE` `PUBLIC` `CATEGORY_IMAGE` linked nowhere else (`422 CATALOG_IMAGE_INVALID`,
             `409 CATALOG_IMAGE_IN_USE`); `null` clears it. The replaced image is archived (Decision AG4).
+    CollectionStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, ARCHIVED]
+      description: '`ACTIVE ↔ INACTIVE`; `ARCHIVED` is final (Decision AL1).'
+    Collection:
+      type: object
+      required: [collectionId, slug, name, description, status, sortOrder, productIds, version, createdAt, updatedAt]
+      properties:
+        collectionId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/CollectionStatus' }
+        sortOrder: { type: integer, format: int32 }
+        productIds:
+          type: array
+          description: In order.
+          items: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CollectionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Collection' }
+    CollectionCreateRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { $ref: '#/components/schemas/CategorySlug' }
+        name: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
+        description: { type: [string, 'null'], maxLength: 500 }
+    CollectionPatch:
+      type: object
+      additionalProperties: false
+      description: "JSON Merge Patch of a Collection (Decision AL1). `null` clears `description` only."
+      properties:
+        name: { type: string, maxLength: 128 }
+        slug: { $ref: '#/components/schemas/CategorySlug' }
+        description: { type: [string, 'null'], maxLength: 500 }
+        sortOrder: { type: integer, format: int32, minimum: 0 }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    CollectionProductsRequest:
+      type: object
+      required: [productIds]
+      properties:
+        productIds:
+          type: array
+          maxItems: 200
+          items: { type: string, format: uuid }
+    TagSlug:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+      description: Lower-case kebab-case, unique (Decision AL2).
+    Tag:
+      type: object
+      required: [tagId, slug, name, createdAt]
+      properties:
+        tagId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+    TagList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Tag' }
+    TagCreateRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { $ref: '#/components/schemas/TagSlug' }
+        name: { type: string, minLength: 1, maxLength: 64, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
+    TagPatch:
+      type: object
+      additionalProperties: false
+      description: "JSON Merge Patch of a Tag (Decision AL2); neither field can be `null`."
+      properties:
+        name: { type: string, maxLength: 64 }
+        slug: { $ref: '#/components/schemas/TagSlug' }
+    ProductTagsRequest:
+      type: object
+      required: [tagIds]
+      properties:
+        tagIds:
+          type: array
+          maxItems: 20
+          items: { type: string, format: uuid }
     CategoryReorderRequest:
       type: object
       required: [parentId, categoryIds]
@@ -3289,6 +3669,11 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     ProductRuleViolated:
       description: '`PRODUCT_TYPE_NOT_SUPPORTED` (only `STANDARD` in v1, Decision B), or `CATALOG_PRICE_NEGATIVE` with `errors[]` (Z2)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CollectionConflict:
+      description: "`CATALOG_SLUG_TAKEN`, `CATALOG_COLLECTION_ARCHIVED` or `CATALOG_PRODUCT_ARCHIVED` (Decision AL)"
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
