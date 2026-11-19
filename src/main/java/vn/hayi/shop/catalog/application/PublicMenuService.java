@@ -1,5 +1,6 @@
 package vn.hayi.shop.catalog.application;
 
+import java.text.Collator;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,8 +44,11 @@ import vn.hayi.shop.catalog.domain.ProductStatus;
 @Service
 public class PublicMenuService {
 
+	/** Vietnamese order of names, so accented names sit with their base letter rather than after Z. */
+	private static final Collator VIETNAMESE = Collator.getInstance(Locale.forLanguageTag("vi"));
+
 	private static final Comparator<Product> MENU_ORDER = Comparator.comparingInt(Product::getSortOrder)
-		.thenComparing(Product::getName)
+		.thenComparing(Product::getName, VIETNAMESE)
 		.thenComparing(Product::getId);
 
 	private final BranchDirectory branches;

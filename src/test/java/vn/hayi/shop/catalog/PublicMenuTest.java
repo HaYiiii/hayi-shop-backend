@@ -213,6 +213,33 @@ class PublicMenuTest {
 	}
 
 	@Test
+	void hiddenAndArchivedItemsAreNotSellable() throws Exception {
+		String category = category(null);
+		Group milk = group(1, "SINGLE", 2);
+		Group ice = group(1, "SINGLE", 2);
+		Product hiding = product(category, 10000);
+		Product archiving = product(category, 10000);
+		attach(hiding.id, milk.id);
+		attach(archiving.id, ice.id);
+		list(hiding.id);
+		list(archiving.id);
+		overrides(hiding.id, "{\"overrides\": [{\"optionItemId\": \"" + milk.items.get(0) + "\", \"isHidden\": true}]}");
+		soldOutOption(milk.items.get(1));
+		assertThat(this.auth.perform(post("/api/backoffice/v1/option-groups/" + ice.id + "/items/" + ice.items.get(0)
+				+ "/archive"), this.admin, true).getStatus()).isEqualTo(200);
+		soldOutOption(ice.items.get(1));
+
+		Map<String, Object> node = node(menu("").getContentAsString(), category);
+		assertThat(availability(node, hiding.id)).as("one item hidden, the other sold out").isEqualTo("SOLD_OUT");
+		assertThat(availability(node, archiving.id)).as("one item archived, the other sold out").isEqualTo("SOLD_OUT");
+
+		overrides(hiding.id, "{\"overrides\": []}");
+		assertThat(availability(node(menu("").getContentAsString(), category), hiding.id))
+			.as("unhidden again")
+			.isEqualTo("AVAILABLE");
+	}
+
+	@Test
 	void aRequiredGroupArchivedAfterAttachingMakesTheProductSoldOut() throws Exception {
 		String category = category(null);
 		Group required = group(1, "SINGLE", 2);
@@ -336,6 +363,17 @@ class PublicMenuTest {
 			.header("If-Match", etag)
 			.content("{\"groups\": [{\"optionGroupId\": \"" + groupId + "\"}]}"), this.admin, true);
 		assertThat(attached.getStatus()).as(attached.getContentAsString()).isEqualTo(200);
+	}
+
+	private void overrides(String productId, String json) throws Exception {
+		String etag = this.auth.perform(get("/api/backoffice/v1/products/" + productId), this.admin, false)
+			.getHeader("ETag");
+		MockHttpServletResponse put = this.auth.perform(put("/api/backoffice/v1/products/" + productId
+				+ "/option-item-overrides")
+			.contentType(MediaType.APPLICATION_JSON)
+			.header("If-Match", etag)
+			.content(json), this.admin, true);
+		assertThat(put.getStatus()).as(put.getContentAsString()).isEqualTo(200);
 	}
 
 	private void list(String productId) throws Exception {

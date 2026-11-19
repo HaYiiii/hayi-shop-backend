@@ -183,7 +183,7 @@ components:
         slug: { type: string }
         name: { type: string }
         primaryImageUrl: { type: [string, 'null'] }
-        fromPrice: { type: integer, format: int64, description: VND, Branch price applied (Decision AH2). }
+        fromPrice: { type: integer, format: int64, description: 'VND, Branch price applied (Decision AH2).' }
         availability: { $ref: '#/components/schemas/MenuAvailability' }
         tags:
           type: array
