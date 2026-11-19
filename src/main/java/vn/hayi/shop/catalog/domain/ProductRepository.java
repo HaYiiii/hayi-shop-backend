@@ -17,6 +17,8 @@ public interface ProductRepository extends Repository<Product, UUID> {
 
 	Optional<Product> findById(UUID id);
 
+	Optional<Product> findBySlug(String slug);
+
 	boolean existsByProductCode(String productCode);
 
 	boolean existsBySlug(String slug);
