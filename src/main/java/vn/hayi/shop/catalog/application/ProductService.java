@@ -412,6 +412,40 @@ public class ProductService {
 		return view(product);
 	}
 
+	/**
+	 * Replaces every selling schedule at {@code expected} version (Decision AK1); no change keeps the version.
+	 * @throws vn.hayi.shop.shared.error.RuleViolationsException {@code CATALOG_SELLING_SCHEDULE_INVALID}
+	 */
+	@Transactional
+	public ProductView replaceSellingSchedules(UUID productId, List<ProductView.Schedule> schedules,
+			ExpectedVersion expected, CatalogClient client) {
+		Product product = find(productId, expected);
+		List<Map<String, Object>> before = schedulesSnapshot(product);
+		if (product.replaceSellingSchedules(schedules.stream().map(ProductView.Schedule::spec).toList(),
+				this.clock.instant())) {
+			save(product);
+			record(client, "PRODUCT_SELLING_SCHEDULE_REPLACE", product, Map.of("schedules", before),
+					Map.of("schedules", schedulesSnapshot(product)));
+		}
+		return view(product);
+	}
+
+	private static List<Map<String, Object>> schedulesSnapshot(Product product) {
+		return product.getSellingSchedules().stream().map(schedule -> {
+			Map<String, Object> entry = new LinkedHashMap<>();
+			entry.put("startDate", (schedule.startDate() != null) ? schedule.startDate().toString() : null);
+			entry.put("endDate", (schedule.endDate() != null) ? schedule.endDate().toString() : null);
+			entry.put("windows", schedule.windows().stream().map(window -> {
+				Map<String, Object> w = new LinkedHashMap<>();
+				w.put("dayOfWeek", window.dayOfWeek());
+				w.put("start", window.start().toString());
+				w.put("end", window.end().toString());
+				return w;
+			}).toList());
+			return entry;
+		}).toList();
+	}
+
 	private static UUID primaryImageId(Product product) {
 		return product.getImages().stream().filter(ProductImage::isPrimary).map(ProductImage::getId).findFirst()
 			.orElse(null);

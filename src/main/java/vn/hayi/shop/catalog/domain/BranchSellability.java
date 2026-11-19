@@ -1,5 +1,6 @@
 package vn.hayi.shop.catalog.domain;
 
+import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -11,10 +12,11 @@ import java.util.stream.Collectors;
 /**
  * Whether and how a Product is offered at one Branch, as customers see it (Catalog §5.6, Decision F, AH1–AH3). Pure:
  * the caller loads the Product, its listing there, its attached groups and the Branch's option overrides.
- * @param availability {@code AVAILABLE}, {@code SOLD_OUT} or {@code PAUSED}
+ * @param availability {@code PAUSED} > {@code SOLD_OUT} > {@code OUTSIDE_SELLING_HOURS} > {@code AVAILABLE} (AK3)
  * @param fromPrice the lowest effective price of the sizes on offer, preferring the {@code AVAILABLE} ones
+ * @param outsideSellingHours outside the selling schedule at the time asked, whatever else holds (AK4)
  */
-public record BranchSellability(AvailabilityState availability, long fromPrice) {
+public record BranchSellability(AvailabilityState availability, long fromPrice, boolean outsideSellingHours) {
 
 	private static final Set<AvailabilityState> STOPPED = EnumSet.of(AvailabilityState.SOLD_OUT,
 			AvailabilityState.PAUSED);
@@ -24,9 +26,10 @@ public record BranchSellability(AvailabilityState availability, long fromPrice) 
 	 * Variant off sale at the Branch (AH1).
 	 * @param groups the option groups attached to {@code product}, by id
 	 * @param optionStates the Branch's state of each option item that has an override there
+	 * @param at the local date and time the order would be fulfilled (Decision AK2)
 	 */
 	public static Optional<BranchSellability> of(Product product, BranchProductListing listing,
-			Map<UUID, OptionGroup> groups, Map<UUID, AvailabilityState> optionStates) {
+			Map<UUID, OptionGroup> groups, Map<UUID, AvailabilityState> optionStates, LocalDateTime at) {
 		if (product.getStatus() != ProductStatus.ACTIVE || listing == null
 				|| listing.getAvailabilityState() == AvailabilityState.NOT_AVAILABLE) {
 			return Optional.empty();
@@ -51,8 +54,11 @@ public record BranchSellability(AvailabilityState availability, long fromPrice) 
 			.mapToLong(Offered::price)
 			.min()
 			.orElseThrow();
-		return Optional.of(new BranchSellability(availability(product, listing, available, groups, optionStates),
-				fromPrice));
+		boolean outside = !product.isOnSaleAt(at.toLocalDate(), at.toLocalTime());
+		AvailabilityState state = availability(product, listing, available, groups, optionStates);
+		return Optional.of(new BranchSellability(
+				(outside && state == AvailabilityState.AVAILABLE) ? AvailabilityState.OUTSIDE_SELLING_HOURS : state,
+				fromPrice, outside));
 	}
 
 	private static AvailabilityState availability(Product product, BranchProductListing listing,

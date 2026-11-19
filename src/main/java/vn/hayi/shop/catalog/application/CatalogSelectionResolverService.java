@@ -3,6 +3,7 @@ package vn.hayi.shop.catalog.application;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
@@ -50,9 +51,12 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 
 	private final OptionGroupRepository optionGroups;
 
+	private final Clock clock;
+
 	CatalogSelectionResolverService(BranchDirectory branches, BranchListingRepository listings,
 			BranchOptionItemListingRepository optionListings, ProductRepository products,
-			OptionGroupRepository optionGroups) {
+			OptionGroupRepository optionGroups, Clock clock) {
+		this.clock = clock;
 		this.branches = branches;
 		this.listings = listings;
 		this.optionListings = optionListings;
@@ -78,7 +82,9 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 		this.optionListings.findByIdBranchId(branchId).forEach(option -> options.put(option.getOptionItemId(), option));
 		Map<UUID, BranchOffer> offers = new LinkedHashMap<>();
 		byId.values()
-			.forEach(product -> BranchOffer.of(product, listingByProduct.get(product.getId()), groups, options)
+			.forEach(product -> BranchOffer
+				.of(product, listingByProduct.get(product.getId()), groups, options,
+						PublicMenuService.local((at != null) ? at : this.clock.instant()))
 				.ifPresent(offer -> offers.put(product.getId(), offer)));
 		List<ResolvedLine> resolved = lines.stream().map(line -> {
 			BranchOffer offer = offers.get(line.productId());

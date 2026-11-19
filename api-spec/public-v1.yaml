@@ -24,8 +24,9 @@ paths:
         No sign-in. Unknown or not `ACTIVE` Branch → `404 BRANCH_NOT_FOUND` (Decision W6). Only `ACTIVE` Products with
         a listing other than `NOT_AVAILABLE` and at least one Variant still listed (W3, AH1), under their primary
         Category; only `ACTIVE` Categories that hold such a Product (themselves or a child). `fromPrice` and
-        `availability` follow Decision AH2–AH3. `at` (ISO instant, default now) is echoed as `evaluatedAt`; selling
-        hours come with BE #70, tags and collections with BE #71. `Cache-Control: public, max-age=30`.
+        `availability` follow Decision AH2–AH3; outside the selling schedule at `at` (ISO instant, default now,
+        `Asia/Ho_Chi_Minh`) a Product is `OUTSIDE_SELLING_HOURS`, after `PAUSED` and `SOLD_OUT` (AK2–AK3). `at` is echoed
+        as `evaluatedAt`; tags and collections come with BE #71. `Cache-Control: public, max-age=30`.
       security: []
       parameters:
         - name: branchId
@@ -246,7 +247,7 @@ components:
     MenuAvailability:
       type: string
       enum: [AVAILABLE, SOLD_OUT, PAUSED, OUTSIDE_SELLING_HOURS]
-      description: Customer-facing, derived (API 02 §2, Decision F, AH3); `OUTSIDE_SELLING_HOURS` from BE #70.
+      description: Customer-facing, derived (API 02 §2, Decision F, AH3, AK3).
     MenuProduct:
       type: object
       required: [productId, slug, name, primaryImageUrl, fromPrice, availability, tags]
@@ -288,7 +289,7 @@ components:
       type: object
       required: [lines]
       properties:
-        at: { type: [string, 'null'], format: date-time, description: 'Fulfilment time; selling hours from BE #70.' }
+        at: { type: [string, 'null'], format: date-time, description: 'Fulfilment time for the selling hours (AK4).' }
         lines:
           type: array
           minItems: 1
@@ -310,7 +311,7 @@ components:
       type: string
       enum: [PRODUCT_NOT_FOUND, PRODUCT_SOLD_OUT, PRODUCT_PAUSED, OUTSIDE_SELLING_HOURS, VARIANT_SOLD_OUT,
         VARIANT_NOT_AVAILABLE, OPTION_ITEM_SOLD_OUT, OPTION_SELECTION_INVALID, REQUIRED_OPTION_GROUP_UNSATISFIABLE]
-      description: Catalog §5.8 (Decision AJ2); `OUTSIDE_SELLING_HOURS` from BE #70.
+      description: Catalog §5.8 (Decision AJ2, AK4).
     ResolveIssue:
       type: object
       required: [code]
@@ -398,7 +399,7 @@ components:
           items: { $ref: '#/components/schemas/DetailOptionGroup' }
         sellingSchedule:
           type: [object, 'null']
-          description: '`null` until BE #70.'
+          description: "A Vietnamese summary of the selling schedules (Decision AK3); `null` when there is none."
           properties:
             summary: { type: string }
     PublicMenu:

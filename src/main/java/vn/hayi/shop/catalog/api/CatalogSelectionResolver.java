@@ -13,7 +13,7 @@ import java.util.UUID;
 public interface CatalogSelectionResolver {
 
 	/**
-	 * @param at when the order would be fulfilled ({@code null} = now); selling hours use it from BE #70
+	 * @param at when the order would be fulfilled ({@code null} = now), for the selling hours (Decision AK2)
 	 * @throws vn.hayi.shop.shared.error.DomainException {@code BRANCH_NOT_FOUND} unless the Branch is {@code ACTIVE}
 	 */
 	ResolvedSelections resolve(UUID branchId, List<SelectionRequest> lines, Instant at);
@@ -38,18 +38,18 @@ public interface CatalogSelectionResolver {
 	record Issue(IssueCode code, UUID optionItemId, UUID optionGroupId) {
 	}
 
-	/** Catalog §5.8, API 02 §2 ({@code OUTSIDE_SELLING_HOURS} from BE #70). */
+	/** Catalog §5.8, API 02 §2. */
 	enum IssueCode {
 
 		PRODUCT_NOT_FOUND, PRODUCT_SOLD_OUT, PRODUCT_PAUSED, VARIANT_SOLD_OUT, VARIANT_NOT_AVAILABLE,
-		OPTION_ITEM_SOLD_OUT, OPTION_SELECTION_INVALID, REQUIRED_OPTION_GROUP_UNSATISFIABLE
+		OPTION_ITEM_SOLD_OUT, OPTION_SELECTION_INVALID, REQUIRED_OPTION_GROUP_UNSATISFIABLE, OUTSIDE_SELLING_HOURS
 
 	}
 
-	/** Catalog §5.6. */
+	/** Catalog §5.6; {@code OUTSIDE_SELLING_HOURS} is derived from the selling schedule (§5.7, Decision AK). */
 	enum Availability {
 
-		NOT_AVAILABLE, AVAILABLE, SOLD_OUT, PAUSED
+		NOT_AVAILABLE, AVAILABLE, SOLD_OUT, PAUSED, OUTSIDE_SELLING_HOURS
 
 	}
 

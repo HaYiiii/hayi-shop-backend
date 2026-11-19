@@ -1,6 +1,8 @@
 package vn.hayi.shop.catalog.domain;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -106,6 +108,14 @@ public class Product {
 	@OrderBy("sortOrder")
 	@BatchSize(size = 100)
 	private List<ProductImage> images = new ArrayList<>();
+
+	/** When it may be sold (Decision AK); none = always. As for Variants, a change touches {@code updatedAt}. */
+	@OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+	@OptimisticLock(excluded = true)
+	@JoinColumn(name = "product_id", nullable = false, updatable = false)
+	@OrderBy("startDate ASC, endDate ASC, id ASC")
+	@BatchSize(size = 100)
+	private List<ProductSellingSchedule> sellingSchedules = new ArrayList<>();
 
 	/** Attached option groups in order (Decision AC2); as for Variants, a change touches {@code updatedAt}. */
 	@ElementCollection
@@ -599,6 +609,42 @@ public class Product {
 	/** The images in their order. */
 	public List<ProductImage> getImages() {
 		return this.images.stream().sorted(Comparator.comparingInt(ProductImage::getSortOrder)).toList();
+	}
+
+	/**
+	 * Replaces the selling schedules (Decision AK1); returns whether anything changed. Order of schedules and windows
+	 * does not matter.
+	 * @throws vn.hayi.shop.shared.error.RuleViolationsException {@code CATALOG_SELLING_SCHEDULE_INVALID}
+	 */
+	public boolean replaceSellingSchedules(List<SellingScheduleSpec> schedules, Instant now) {
+		requireNotArchived("set the selling schedules of");
+		SellingScheduleSpec.requireValid(schedules);
+		List<SellingScheduleSpec> normalized = schedules.stream()
+			.map(spec -> new SellingScheduleSpec(spec.startDate(), spec.endDate(),
+					spec.windows().stream().sorted(ProductSellingSchedule.WINDOW_ORDER).toList()))
+			.toList();
+		if (sameSchedules(getSellingSchedules(), normalized)) {
+			return false;
+		}
+		this.sellingSchedules.clear();
+		normalized.forEach(spec -> this.sellingSchedules.add(ProductSellingSchedule.of(spec, now)));
+		this.updatedAt = now;
+		return true;
+	}
+
+	private static boolean sameSchedules(List<SellingScheduleSpec> current, List<SellingScheduleSpec> next) {
+		return current.size() == next.size() && new HashSet<>(current).equals(new HashSet<>(next));
+	}
+
+	/** The schedules as values, windows in a stable order. */
+	public List<SellingScheduleSpec> getSellingSchedules() {
+		return this.sellingSchedules.stream().map(ProductSellingSchedule::spec).toList();
+	}
+
+	/** Whether it may be sold at that local date and time: no schedule, or one that sells then (AK2). */
+	public boolean isOnSaleAt(LocalDate date, LocalTime time) {
+		return this.sellingSchedules.isEmpty() || getSellingSchedules().stream()
+			.anyMatch(schedule -> schedule.sellsAt(date, time));
 	}
 
 	/** The Variant with this id, archived or not. */

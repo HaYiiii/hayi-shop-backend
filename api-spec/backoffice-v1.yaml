@@ -1463,6 +1463,44 @@ paths:
         '412': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/ProductOptionRuleViolated' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /products/{productId}/selling-schedules:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      tags: [Products]
+      operationId: replaceProductSellingSchedules
+      summary: Set when a Product may be sold
+      description: |
+        `CATALOG_MANAGE` (Decision AK1). Replaces every schedule (≤ 10, ≤ 20 windows each). `dayOfWeek` 1..7 (ISO),
+        `null` = every day; a schedule without windows sells all day in its date range; no schedule sells at any time.
+        A reversed date range, a window that does not end after it starts (never over midnight) or windows of one
+        schedule overlapping on a day → `422 CATALOG_SELLING_SCHEDULE_INVALID` with `errors[]`. Archived Product →
+        `409 CATALOG_PRODUCT_INVALID_TRANSITION`. Requires `If-Match`; no change keeps the version. Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SellingSchedulesReplaceRequest' }
+      responses:
+        '200':
+          description: The Product after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ProductInvalidTransition' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/SellingScheduleInvalid' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
   /products/{productId}/option-item-overrides:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -2217,7 +2255,7 @@ components:
       type: object
       required: [productId, productCode, slug, name, productType, status, primaryCategoryId, shortDescription,
         description, sortOrder, archivedAt, createdAt, updatedAt, version, variants, optionGroups, optionItemOverrides,
-        images]
+        images, sellingSchedules]
       properties:
         productId: { type: string, format: uuid }
         productCode: { type: string }
@@ -2246,6 +2284,36 @@ components:
           type: array
           description: In order; one is the primary when there are any (Decision AG5).
           items: { $ref: '#/components/schemas/ProductImage' }
+        sellingSchedules:
+          type: array
+          description: Empty = sold at any time (Decision AK1).
+          items: { $ref: '#/components/schemas/SellingSchedule' }
+    SellingWindow:
+      type: object
+      required: [dayOfWeek, start, end]
+      properties:
+        dayOfWeek: { type: [integer, 'null'], format: int32, minimum: 1, maximum: 7, description: 'ISO; `null` = every day.' }
+        start: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: 'HH:mm, Asia/Ho_Chi_Minh.' }
+        end: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }
+    SellingSchedule:
+      type: object
+      required: [startDate, endDate, windows]
+      properties:
+        startDate: { type: [string, 'null'], format: date }
+        endDate: { type: [string, 'null'], format: date }
+        windows:
+          type: array
+          maxItems: 20
+          description: Empty = the whole day within the date range.
+          items: { $ref: '#/components/schemas/SellingWindow' }
+    SellingSchedulesReplaceRequest:
+      type: object
+      required: [schedules]
+      properties:
+        schedules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/SellingSchedule' }
     ProductImage:
       type: object
       required: [imageId, storedObjectId, url, altText, sortOrder, isPrimary]
@@ -3142,6 +3210,11 @@ components:
       description: |
         `UPLOAD_NOT_FOUND_IN_STORAGE`, `UPLOAD_TOO_LARGE`, `UPLOAD_MIME_MISMATCH` or `UPLOAD_CHECKSUM_MISMATCH`
         (Decision AF2)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    SellingScheduleInvalid:
+      description: "`CATALOG_SELLING_SCHEDULE_INVALID` with `errors[]` (Decision AK1)"
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -1,5 +1,6 @@
 package vn.hayi.shop.catalog.domain;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -26,14 +27,15 @@ public record BranchOffer(BranchSellability sellability, AvailabilityState listi
 	 * Empty when the Product is not on the Branch's menu (AH1).
 	 * @param groups the option groups attached to {@code product}, by id
 	 * @param optionListings the Branch's option overrides, by option item id
+	 * @param at the local date and time the order would be fulfilled (Decision AK2)
 	 */
 	public static Optional<BranchOffer> of(Product product, BranchProductListing listing, Map<UUID, OptionGroup> groups,
-			Map<UUID, BranchOptionItemListing> optionListings) {
+			Map<UUID, BranchOptionItemListing> optionListings, LocalDateTime at) {
 		Map<UUID, AvailabilityState> optionStates = optionListings.values()
 			.stream()
 			.collect(Collectors.toMap(BranchOptionItemListing::getOptionItemId,
 					BranchOptionItemListing::getAvailabilityState));
-		return BranchSellability.of(product, listing, groups, optionStates)
+		return BranchSellability.of(product, listing, groups, optionStates, at)
 			.map(sellability -> new BranchOffer(sellability, listing.getAvailabilityState(),
 					variants(product, listing, sellability.availability()), groups(product, groups, optionListings),
 					unsatisfied(product, groups, optionStates)));
@@ -55,6 +57,9 @@ public record BranchOffer(BranchSellability sellability, AvailabilityState listi
 		}
 		this.unsatisfiedRequiredGroups.forEach(groupId -> issues.add(new SelectionResult.Issue(
 				SelectionIssueCode.REQUIRED_OPTION_GROUP_UNSATISFIABLE, null, groupId)));
+		if (this.sellability.outsideSellingHours()) {
+			issues.add(new SelectionResult.Issue(SelectionIssueCode.OUTSIDE_SELLING_HOURS, null, null));
+		}
 		OfferedVariant variant = this.variants.stream()
 			.filter(candidate -> candidate.variantId().equals(variantId))
 			.findFirst()
@@ -126,7 +131,9 @@ public record BranchOffer(BranchSellability sellability, AvailabilityState listi
 	 */
 	private static List<OfferedVariant> variants(Product product, BranchProductListing listing,
 			AvailabilityState productState) {
-		boolean productStopped = EnumSet.of(AvailabilityState.SOLD_OUT, AvailabilityState.PAUSED).contains(productState);
+		boolean productStopped = EnumSet
+			.of(AvailabilityState.SOLD_OUT, AvailabilityState.PAUSED, AvailabilityState.OUTSIDE_SELLING_HOURS)
+			.contains(productState);
 		return product.getVariants()
 			.stream()
 			.filter(variant -> variant.getStatus() == VariantStatus.ACTIVE)
