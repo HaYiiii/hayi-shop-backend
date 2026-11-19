@@ -243,6 +243,45 @@ class BackofficeImageTest {
 		MockHttpServletResponse cleared = patchCategory(category, "\"v2\"", "{\"imageObjectId\": null}");
 		assertThat(JsonPath.<Object>read(cleared.getContentAsString(), "$.imageUrl")).isNull();
 		assertThat(objectStatus(second)).isEqualTo("ARCHIVED");
+
+		List<Map<String, Object>> audits = audits(category, "CATEGORY_UPDATE");
+		assertThat(audits).hasSize(3);
+		Map<String, Object> replacedOld = JsonPath.read((String) audits.get(1).get("old_value"), "$");
+		Map<String, Object> replacedNew = JsonPath.read((String) audits.get(1).get("new_value"), "$");
+		assertThat(replacedOld).containsOnlyKeys("imageObjectId").containsEntry("imageObjectId", first);
+		assertThat(replacedNew).containsEntry("imageObjectId", second);
+		assertThat(JsonPath.<Object>read((String) audits.get(2).get("new_value"), "$.imageObjectId")).isNull();
+	}
+
+	@Test
+	void removingAnImageThatIsNotThePrimaryKeepsThePrimary() throws Exception {
+		String product = product();
+		addImage(product, image(uploaded("PRODUCT_IMAGE"), false));
+		String second = uploaded("PRODUCT_IMAGE");
+		addImage(product, image(second, false));
+		List<String> ids = JsonPath.read(detail(product), "$.images[*].imageId");
+
+		assertThat(this.auth.perform(delete(PRODUCTS + "/" + product + "/images/" + ids.getLast()), this.admin, true)
+			.getStatus()).isEqualTo(200);
+
+		String body = detail(product);
+		assertThat(JsonPath.<List<String>>read(body, "$.images[*].imageId")).containsExactly(ids.getFirst());
+		assertThat(JsonPath.<List<Boolean>>read(body, "$.images[*].isPrimary")).containsExactly(true);
+		assertThat(objectStatus(second)).isEqualTo("ARCHIVED");
+	}
+
+	@Test
+	void removingTheLastImageLeavesNone() throws Exception {
+		String product = product();
+		String only = uploaded("PRODUCT_IMAGE");
+		addImage(product, image(only, false));
+		String imageId = JsonPath.<List<String>>read(detail(product), "$.images[*].imageId").getFirst();
+
+		assertThat(this.auth.perform(delete(PRODUCTS + "/" + product + "/images/" + imageId), this.admin, true)
+			.getStatus()).isEqualTo(200);
+
+		assertThat(JsonPath.<List<Object>>read(detail(product), "$.images")).isEmpty();
+		assertThat(objectStatus(only)).isEqualTo("ARCHIVED");
 	}
 
 	@Test
