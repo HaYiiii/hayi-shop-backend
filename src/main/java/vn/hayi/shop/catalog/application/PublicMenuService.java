@@ -3,6 +3,7 @@ package vn.hayi.shop.catalog.application;
 import java.text.Collator;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -40,6 +41,7 @@ import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
 import vn.hayi.shop.catalog.domain.ProductRepository;
 import vn.hayi.shop.catalog.domain.ProductStatus;
 import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.time.BranchTime;
 
 /**
  * The menu customers see at one Branch (API 02 §2, Catalog §5.6, Decision F, W3, W6, AH): read on each request
@@ -109,7 +111,7 @@ public class PublicMenuService {
 			.toList());
 		Map<UUID, List<MenuProduct>> byCategory = new LinkedHashMap<>();
 		found.stream().sorted(MENU_ORDER).forEach(product -> BranchSellability
-			.of(product, byProduct.get(product.getId()), groups, optionStates)
+			.of(product, byProduct.get(product.getId()), groups, optionStates, local(evaluatedAt))
 			.ifPresent(sellability -> byCategory.computeIfAbsent(product.getPrimaryCategoryId(), id -> new ArrayList<>())
 				.add(new MenuProduct(product.getId(), product.getSlug(), product.getName(),
 						primaryImage(product).map(imageUrls::get).orElse(null), sellability.fromPrice(),
@@ -133,7 +135,8 @@ public class PublicMenuService {
 		Map<UUID, BranchOptionItemListing> optionListings = new HashMap<>();
 		this.optionListings.findByIdBranchId(branchId)
 			.forEach(option -> optionListings.put(option.getOptionItemId(), option));
-		BranchOffer offer = BranchOffer.of(product, listing, groupsOf(List.of(product)), optionListings)
+		BranchOffer offer = BranchOffer
+			.of(product, listing, groupsOf(List.of(product)), optionListings, local(this.clock.instant()))
 			.orElseThrow(() -> notFound(productIdOrSlug));
 		List<ProductImage> productImages = product.getImages();
 		Map<UUID, String> urls = this.images
@@ -158,7 +161,8 @@ public class PublicMenuService {
 								.map(item -> new DetailItem(item.optionItemId(), item.name(), item.extraPrice(),
 										item.isDefaultSelected(), item.availability().name()))
 								.toList()))
-					.toList());
+					.toList(),
+				SellingScheduleSummary.of(product.getSellingSchedules()));
 	}
 
 	public record DetailVariant(UUID variantId, String name, long price, boolean isDefault, String availability) {
@@ -170,6 +174,11 @@ public class PublicMenuService {
 
 	public record DetailItem(UUID optionItemId, String name, long extraPrice, boolean isDefaultSelected,
 			String availability) {
+	}
+
+	/** Selling hours are local to the Branch (Decision AK2); every Branch uses the operational zone today. */
+	static LocalDateTime local(Instant instant) {
+		return LocalDateTime.ofInstant(instant, BranchTime.DEFAULT_ZONE);
 	}
 
 	private static Optional<UUID> asUuid(String value) {
@@ -186,8 +195,10 @@ public class PublicMenuService {
 				"No Product " + productIdOrSlug + " on this menu");
 	}
 
+	/** {@code sellingScheduleSummary} is {@code null} when the Product has no schedule (Decision AK3). */
 	public record ProductDetail(UUID productId, String slug, String name, String description, List<DetailImage> images,
-			String availability, List<DetailVariant> variants, List<DetailGroup> optionGroups) {
+			String availability, List<DetailVariant> variants, List<DetailGroup> optionGroups,
+			String sellingScheduleSummary) {
 	}
 
 	public record DetailImage(String url, String altText, boolean isPrimary) {

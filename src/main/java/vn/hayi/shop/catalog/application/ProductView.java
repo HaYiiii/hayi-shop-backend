@@ -1,6 +1,8 @@
 package vn.hayi.shop.catalog.application;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -11,12 +13,14 @@ import vn.hayi.shop.catalog.domain.Product;
 import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
 import vn.hayi.shop.catalog.domain.ProductOptionItemOverride;
 import vn.hayi.shop.catalog.domain.ProductVariant;
+import vn.hayi.shop.catalog.domain.SellingScheduleSpec;
 
 /** A Product as read in the Backoffice, with every Variant and its option configuration (Decision Z7, AC5). */
 public record ProductView(UUID productId, String productCode, String slug, String name, String productType,
 		String status, UUID primaryCategoryId, String shortDescription, String description, int sortOrder,
 		Instant archivedAt, Instant createdAt, Instant updatedAt, long version, List<Variant> variants,
-		List<AttachedGroup> optionGroups, List<ItemOverride> optionItemOverrides, List<Image> images) {
+		List<AttachedGroup> optionGroups, List<ItemOverride> optionItemOverrides, List<Image> images,
+		List<Schedule> sellingSchedules) {
 
 	/**
 	 * {@code groups} are the option groups attached to {@code product}, by id; {@code imageUrls} the public URL of its
@@ -41,7 +45,30 @@ public record ProductView(UUID productId, String productCode, String slug, Strin
 					.map(image -> new Image(image.getId(), image.getStoredObjectId(),
 							imageUrls.get(image.getStoredObjectId()), image.getAltText(), image.getSortOrder(),
 							image.isPrimary()))
-					.toList());
+					.toList(),
+				product.getSellingSchedules().stream().map(Schedule::of).toList());
+	}
+
+	/** A selling schedule (Decision AK1); no window = the whole day within the date range. */
+	public record Schedule(LocalDate startDate, LocalDate endDate, List<Window> windows) {
+
+		static Schedule of(SellingScheduleSpec spec) {
+			return new Schedule(spec.startDate(), spec.endDate(), spec.windows()
+				.stream()
+				.map(window -> new Window(window.dayOfWeek(), window.start(), window.end()))
+				.toList());
+		}
+
+		SellingScheduleSpec spec() {
+			return new SellingScheduleSpec(this.startDate, this.endDate, this.windows.stream()
+				.map(window -> new SellingScheduleSpec.Window(window.dayOfWeek(), window.start(), window.end()))
+				.toList());
+		}
+
+	}
+
+	/** {@code dayOfWeek} 1..7 (ISO), {@code null} = every day. */
+	public record Window(Integer dayOfWeek, LocalTime start, LocalTime end) {
 	}
 
 	public record Image(UUID imageId, UUID storedObjectId, String url, String altText, int sortOrder,

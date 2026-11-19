@@ -19,6 +19,7 @@ import vn.hayi.shop.platform.web.spec.publicapi.model.DetailOptionItemDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.DetailVariantDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.MenuAvailabilityDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.PublicProductDetailDto;
+import vn.hayi.shop.platform.web.spec.publicapi.model.PublicProductDetailSellingScheduleDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveIssueCodeDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveIssueDto;
 import vn.hayi.shop.platform.web.spec.publicapi.model.ResolveLineDto;
@@ -107,7 +108,9 @@ class PublicMenuController implements PublicMenuApi {
 											MenuAvailabilityDto.valueOf(item.availability())))
 									.toList()))
 						.toList(),
-					null));
+					(product.sellingScheduleSummary() != null)
+							? new PublicProductDetailSellingScheduleDto().summary(product.sellingScheduleSummary())
+							: null));
 	}
 
 	private static MenuCategoryDto toDto(PublicMenuService.MenuCategory category) {

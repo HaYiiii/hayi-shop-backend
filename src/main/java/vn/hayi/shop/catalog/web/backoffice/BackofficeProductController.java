@@ -2,6 +2,7 @@ package vn.hayi.shop.catalog.web.backoffice;
 
 import java.net.URI;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -40,6 +41,9 @@ import vn.hayi.shop.platform.web.spec.backoffice.model.ProductDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageInputDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductImageOrderRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.SellingScheduleDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.SellingSchedulesReplaceRequestDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.SellingWindowDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionGroupsReplaceRequestDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.ProductOptionItemOverrideDto;
@@ -191,6 +195,22 @@ class BackofficeProductController implements ProductsApi {
 		return withETag(this.products.reorderImages(productId, body.getImageIds(), expected, client()));
 	}
 
+	@Override
+	@RequiresPermission(Permission.CATALOG_MANAGE)
+	public ResponseEntity<ProductDto> replaceProductSellingSchedules(UUID productId,
+			SellingSchedulesReplaceRequestDto body, String ifMatch, String xCsrfToken) {
+		var expected = VersionTags.require(ifMatch);
+		return withETag(this.products.replaceSellingSchedules(productId, body.getSchedules()
+			.stream()
+			.map(schedule -> new ProductView.Schedule(schedule.getStartDate(), schedule.getEndDate(),
+					schedule.getWindows()
+						.stream()
+						.map(window -> new ProductView.Window(window.getDayOfWeek(), LocalTime.parse(window.getStart()),
+								LocalTime.parse(window.getEnd())))
+						.toList()))
+			.toList(), expected, client()));
+	}
+
 	private boolean hasPricePermission() {
 		return this.permissions.evaluate(AuthenticatedSession.require().userId(), Permission.CATALOG_PRICE_MANAGE,
 				Optional.empty()) == AccessDecision.GRANTED;
@@ -334,7 +354,18 @@ class BackofficeProductController implements ProductsApi {
 				product.images().stream()
 					.map(image -> new ProductImageDto(image.imageId(), image.storedObjectId(), image.url(),
 							image.altText(), image.sortOrder(), image.isPrimary()))
+					.toList(),
+				product.sellingSchedules().stream()
+					.map(schedule -> new SellingScheduleDto(schedule.startDate(), schedule.endDate(),
+							schedule.windows().stream()
+								.map(window -> new SellingWindowDto(window.dayOfWeek(), hhMm(window.start()),
+										hhMm(window.end())))
+								.toList()))
 					.toList());
+	}
+
+	private static String hhMm(LocalTime time) {
+		return String.format("%02d:%02d", time.getHour(), time.getMinute());
 	}
 
 	private static ProductSummaryDto toDto(ProductSummary product) {
