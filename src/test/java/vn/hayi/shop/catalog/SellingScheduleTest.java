@@ -116,8 +116,18 @@ class SellingScheduleTest {
 		assertThat(same.getHeader("ETag")).as("no change keeps the version").isEqualTo("\"v2\"");
 		assertThat(audits(product.id, "PRODUCT_SELLING_SCHEDULE_REPLACE")).hasSize(1);
 
-		MockHttpServletResponse cleared = putSchedules(product.id, "\"v2\"", "{\"schedules\": []}");
-		assertThat(cleared.getHeader("ETag")).isEqualTo("\"v3\"");
+		String a = "{\"startDate\": \"2031-01-01\", \"endDate\": null, \"windows\": []}";
+		String b = "{\"startDate\": \"2031-02-01\", \"endDate\": null, \"windows\": []}";
+		assertThat(putSchedules(product.id, "\"v2\"", "{\"schedules\": [" + a + ", " + a + ", " + b + "]}")
+			.getHeader("ETag")).isEqualTo("\"v3\"");
+		MockHttpServletResponse repeats = putSchedules(product.id, "\"v3\"",
+				"{\"schedules\": [" + a + ", " + b + ", " + b + "]}");
+		assertThat(repeats.getHeader("ETag")).as("other repeats are a change").isEqualTo("\"v4\"");
+		assertThat(JsonPath.<List<String>>read(repeats.getContentAsString(), "$.sellingSchedules[*].startDate"))
+			.containsExactlyInAnyOrder("2031-01-01", "2031-02-01", "2031-02-01");
+
+		MockHttpServletResponse cleared = putSchedules(product.id, "\"v4\"", "{\"schedules\": []}");
+		assertThat(cleared.getHeader("ETag")).isEqualTo("\"v5\"");
 		assertThat(JsonPath.<List<Object>>read(cleared.getContentAsString(), "$.sellingSchedules")).isEmpty();
 	}
 

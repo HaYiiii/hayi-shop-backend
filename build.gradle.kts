@@ -103,6 +103,8 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 		schemaMappings = mapOf(
 			"BranchPatch" to "tools.jackson.databind.JsonNode",
 			"CategoryPatch" to "tools.jackson.databind.JsonNode",
+			"CollectionPatch" to "tools.jackson.databind.JsonNode",
+			"TagPatch" to "tools.jackson.databind.JsonNode",
 			"OptionGroupPatch" to "tools.jackson.databind.JsonNode",
 			"OptionItemPatch" to "tools.jackson.databind.JsonNode",
 			"ProductPatch" to "tools.jackson.databind.JsonNode",
