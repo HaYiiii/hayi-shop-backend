@@ -57,6 +57,14 @@ hayi:
   security:
     signing-key: ${HAYI_SECURITY_SIGNING_KEY:}   # ES256 private JWK (JSON); never committed
     mfa-encryption-key: ${HAYI_SECURITY_MFA_ENCRYPTION_KEY:}   # AES-256 key (base64) for TOTP secrets (Decision L3)
+  storage:                                       # S3-compatible object storage (Decision H5, AF4)
+    endpoint: ${HAYI_STORAGE_ENDPOINT:http://localhost:8333}   # local SeaweedFS (compose.yaml)
+    region: ${HAYI_STORAGE_REGION:us-east-1}
+    access-key: ${HAYI_STORAGE_ACCESS_KEY:}      # blank → SDK default chain; local dev: docker/seaweedfs/s3.json
+    secret-key: ${HAYI_STORAGE_SECRET_KEY:}
+    public-bucket: ${HAYI_STORAGE_PUBLIC_BUCKET:hayi-public}
+    public-base-url: ${HAYI_STORAGE_PUBLIC_BASE_URL:}   # CDN in production; blank → endpoint
+    create-bucket: ${HAYI_STORAGE_CREATE_BUCKET:false}   # local dev / tests only
   identity:
     bootstrap:
       owner-email: ${HAYI_BOOTSTRAP_OWNER_EMAIL:}        # Decision K1: set both once on a new environment

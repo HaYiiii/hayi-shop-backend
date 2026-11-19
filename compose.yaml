@@ -19,6 +19,6 @@ services:
     volumes:
       - './docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro'
     ports:
-      - '8333'
+      - '8333:8333'   # fixed: the browser PUTs to the pre-signed URL on this port (Decision AF1)
     labels:
       org.springframework.boot.ignore: true

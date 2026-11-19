@@ -42,6 +42,9 @@ dependencies {
 	implementation(libs.shedlock.jdbc)
 	implementation(libs.bouncycastle.prov)
 	implementation("com.github.ben-manes.caffeine:caffeine") // version from the Boot BOM
+	implementation(platform(libs.awssdk.bom))
+	implementation("software.amazon.awssdk:s3") // S3Client + S3Presigner (Decision AF4)
+	implementation("software.amazon.awssdk:url-connection-client")
 
 	runtimeOnly("com.mysql:mysql-connector-j")
 	runtimeOnly("org.springframework.modulith:spring-modulith-actuator")
