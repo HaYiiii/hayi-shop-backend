@@ -1,4 +1,7 @@
 # Test-only overrides (classpath:/config/ wins over classpath:/application.yaml).
+spring:
+  profiles:
+    active: test   # enables the dev OTP sender (Decision AN6)
 hayi:
   rate-limit:
     public:                     # every MockMvc call comes from 127.0.0.1; PublicRateLimitTest sets its own limits

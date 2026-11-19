@@ -1,5 +1,7 @@
 package vn.hayi.shop.identity.domain;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,6 +24,22 @@ public interface VerificationChallengeRepository extends Repository<Verification
 	/** The owner of a challenge, read without loading it, so the user row can be locked before the challenge. */
 	@Query("select c.userId from VerificationChallenge c where c.id = :id and c.purpose = :purpose")
 	Optional<UUID> findUserIdByIdAndPurpose(UUID id, VerificationPurpose purpose);
+
+	/** Ends the open OTPs sent to {@code target} for {@code purpose}: a new code replaces them (Decision AN1). */
+	@Modifying
+	@Query("""
+			update VerificationChallenge c set c.status = :expired, c.version = c.version + 1
+			where c.target = :target and c.purpose = :purpose and c.status = :pending
+			""")
+	int expireOpenForTarget(String target, VerificationPurpose purpose, VerificationStatus pending,
+			VerificationStatus expired);
+
+	/** When codes were sent to {@code target} for {@code purpose} since {@code since}, oldest first (Decision AN5). */
+	@Query("""
+			select c.createdAt from VerificationChallenge c
+			where c.target = :target and c.purpose = :purpose and c.createdAt > :since order by c.createdAt
+			""")
+	List<Instant> findSentSince(String target, VerificationPurpose purpose, Instant since);
 
 	/** Ends the user's open challenges of {@code purpose}: a new login replaces them (Decision L1). */
 	@Modifying

@@ -37,6 +37,13 @@ public class UserCredential {
 		return credential;
 	}
 
+	/** A password the user chose (Customer registration): nothing to replace at first login. */
+	public static UserCredential chosen(UUID userId, String passwordHash, Instant now) {
+		UserCredential credential = temporary(userId, passwordHash, now);
+		credential.mustChangePassword = false;
+		return credential;
+	}
+
 	public void changePassword(String newPasswordHash, Instant now) {
 		this.passwordHash = newPasswordHash;
 		this.mustChangePassword = false;
