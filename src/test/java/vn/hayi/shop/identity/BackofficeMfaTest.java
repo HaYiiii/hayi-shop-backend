@@ -179,7 +179,7 @@ class BackofficeMfaTest {
 			.contains("Path=/api/backoffice", "Max-Age=600", "Secure", "HttpOnly", "SameSite=Lax"));
 		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_rt")).hasValueSatisfying(cookie -> assertThat(cookie)
 			.contains("Path=/api/backoffice/v1/auth", "Secure", "HttpOnly", "SameSite=Strict"));
-		assertThat(BackofficeAuth.setCookieHeader(response, "hy_csrf")).hasValueSatisfying(cookie -> assertThat(cookie)
+		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_csrf")).hasValueSatisfying(cookie -> assertThat(cookie)
 			.contains("Path=/", "Secure", "SameSite=Lax").doesNotContain("HttpOnly"));
 		assertThat(this.fixtures.securityEvents("SESSION_CREATED", userId)).isEqualTo(1);
 		assertThat(this.auth.csrf(BackofficeAuth.Session.from(response)).getStatus()).isEqualTo(204);

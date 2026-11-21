@@ -140,7 +140,7 @@ class BackofficeSessionTest {
 		assertThat(response.getStatus()).isEqualTo(204);
 		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_at")).hasValueSatisfying(cookie -> assertThat(cookie).contains("Max-Age=0"));
 		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_rt")).hasValueSatisfying(cookie -> assertThat(cookie).contains("Max-Age=0"));
-		assertThat(BackofficeAuth.setCookieHeader(response, "hy_csrf")).hasValueSatisfying(cookie -> assertThat(cookie).contains("Max-Age=0"));
+		assertThat(BackofficeAuth.setCookieHeader(response, "hy_b_csrf")).hasValueSatisfying(cookie -> assertThat(cookie).contains("Max-Age=0"));
 		assertThat(this.fixtures.securityEvents("SESSION_REVOKED", this.userId)).isEqualTo(1);
 		assertProblem(this.auth.refresh(session), 401, "AUTH_SESSION_REVOKED");
 		assertThat(this.auth.logout(session).getStatus()).isEqualTo(204);

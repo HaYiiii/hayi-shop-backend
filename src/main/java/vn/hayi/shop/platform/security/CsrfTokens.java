@@ -19,8 +19,6 @@ import vn.hayi.shop.platform.persistence.UuidBinary;
 @Component
 public class CsrfTokens {
 
-	public static final String COOKIE = "hy_csrf";
-
 	public static final String HEADER = "X-CSRF-Token";
 
 	/** Request attribute holding the session id a validated CSRF token belongs to. */

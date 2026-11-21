@@ -95,7 +95,7 @@ paths:
       operationId: loginCustomer
       summary: Log in with phone and password
       description: |
-        On success sets `hy_c_at`, `hy_c_rt` and `hy_csrf` (Decision AO1). A malformed or unknown phone, a wrong
+        On success sets `hy_c_at`, `hy_c_rt` and `hy_c_csrf` (Decision AO1). A malformed or unknown phone, a wrong
         password or an account without a Customer profile → `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures
         within a sliding 15 minutes → `429 AUTH_LOGIN_LOCKED` with `Retry-After` (K2). 20 attempts per minute per IP →
         `429 RATE_LIMITED` (AO4). `verificationRequired` is reserved for the risk engine (`202`), always `false` now.
@@ -161,7 +161,7 @@ paths:
       tags: [CustomerAuth]
       operationId: issueCustomerCsrfToken
       summary: Re-issue the CSRF cookie
-      description: Sets a fresh `hy_csrf` bound to the current session (API 01-security §3.1).
+      description: Sets a fresh `hy_c_csrf` bound to the current session (API 01-security §3.1).
       responses:
         '204':
           description: CSRF cookie set.
@@ -202,7 +202,7 @@ components:
       name: X-CSRF-Token
       in: header
       required: false
-      description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
+      description: Value of the `hy_c_csrf` cookie (the Customer one, Decision AP1); missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
   headers:
     SetCookie:
