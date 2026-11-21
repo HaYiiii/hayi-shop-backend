@@ -20,7 +20,7 @@ import vn.hayi.shop.shared.error.DomainException;
 
 /**
  * Double-submit CSRF check (API 01-security §3.1): every unsafe request that rides on auth cookies must echo the
- * {@code hy_csrf} cookie in {@code X-CSRF-Token}, and the token must belong to the caller's session. Failures get
+ * CSRF cookie of the request's surface ({@code hy_b_csrf} / {@code hy_c_csrf}, Decision AP1) in {@code X-CSRF-Token}, and the token must belong to the caller's session. Failures get
  * {@code 403 CSRF_INVALID} and a {@code CSRF_VALIDATION_FAILED} security event.
  * <p>
  * Runs after authentication: requests without a session (public, login) are not checked; refresh and logout carry
@@ -53,7 +53,10 @@ final class CsrfFilter extends OncePerRequestFilter {
 			return;
 		}
 		String header = request.getHeader(CsrfTokens.HEADER);
-		String cookie = CookieBearerTokenResolver.cookie(request, CsrfTokens.COOKIE);
+		// Each surface has its own CSRF cookie (Decision AP1); a request off both surfaces has none.
+		String cookie = Surface.of(AuthEndpoints.pathOf(request))
+			.map(surface -> CookieBearerTokenResolver.cookie(request, surface.csrfCookie()))
+			.orElse(null);
 		Optional<UUID> tokenSession = sameValue(header, cookie) ? this.tokens.sessionOf(header) : Optional.empty();
 		boolean valid = tokenSession.isPresent()
 				&& session.map(current -> current.sessionId().equals(tokenSession.get())).orElse(true);

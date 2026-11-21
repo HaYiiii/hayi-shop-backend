@@ -11,8 +11,8 @@ import vn.hayi.shop.shared.actor.Persona;
  */
 public enum Surface {
 
-	BACKOFFICE("/api/backoffice", "hayi-backoffice", "hy_b_at", "hy_b_rt", Persona.STAFF),
-	CUSTOMER("/api/customer", "hayi-customer", "hy_c_at", "hy_c_rt", Persona.CUSTOMER);
+	BACKOFFICE("/api/backoffice", "hayi-backoffice", "hy_b_at", "hy_b_rt", "hy_b_csrf", Persona.STAFF),
+	CUSTOMER("/api/customer", "hayi-customer", "hy_c_at", "hy_c_rt", "hy_c_csrf", Persona.CUSTOMER);
 
 	private final String pathPrefix;
 
@@ -22,13 +22,17 @@ public enum Surface {
 
 	private final String refreshCookie;
 
+	private final String csrfCookie;
+
 	private final Persona persona;
 
-	Surface(String pathPrefix, String audience, String accessCookie, String refreshCookie, Persona persona) {
+	Surface(String pathPrefix, String audience, String accessCookie, String refreshCookie, String csrfCookie,
+			Persona persona) {
 		this.pathPrefix = pathPrefix;
 		this.audience = audience;
 		this.accessCookie = accessCookie;
 		this.refreshCookie = refreshCookie;
+		this.csrfCookie = csrfCookie;
 		this.persona = persona;
 	}
 
@@ -60,6 +64,11 @@ public enum Surface {
 
 	public String refreshCookie() {
 		return this.refreshCookie;
+	}
+
+	/** The CSRF double-submit cookie of this surface (Decision AP1): one per surface, so two logins never clash. */
+	public String csrfCookie() {
+		return this.csrfCookie;
 	}
 
 	public Persona persona() {

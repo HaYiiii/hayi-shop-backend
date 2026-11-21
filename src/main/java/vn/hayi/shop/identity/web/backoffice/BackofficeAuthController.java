@@ -186,7 +186,7 @@ class BackofficeAuthController implements AuthApi {
 	@Override
 	public ResponseEntity<Void> issueCsrfToken() {
 		AuthenticatedSession session = AuthenticatedSession.require();
-		ResponseCookie csrf = this.cookies.csrf(this.csrfTokens.issue(session.sessionId()), null);
+		ResponseCookie csrf = this.cookies.csrf(Surface.BACKOFFICE, this.csrfTokens.issue(session.sessionId()), null);
 		return ResponseEntity.noContent().headers(setCookies(List.of(csrf))).build();
 	}
 

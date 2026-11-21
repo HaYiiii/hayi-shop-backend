@@ -154,14 +154,14 @@ public final class BackofficeAuth {
 	public record Session(String access, String refresh, String csrf) {
 
 		static Session from(MockHttpServletResponse response) {
-			return new Session(value(response, "hy_b_at"), value(response, "hy_b_rt"), value(response, "hy_csrf"));
+			return new Session(value(response, "hy_b_at"), value(response, "hy_b_rt"), value(response, "hy_b_csrf"));
 		}
 
 		/** The jar after a response that may replace some cookies. */
 		Session update(MockHttpServletResponse response) {
 			return new Session(Optional.ofNullable(value(response, "hy_b_at")).orElse(this.access),
 					Optional.ofNullable(value(response, "hy_b_rt")).orElse(this.refresh),
-					Optional.ofNullable(value(response, "hy_csrf")).orElse(this.csrf));
+					Optional.ofNullable(value(response, "hy_b_csrf")).orElse(this.csrf));
 		}
 
 		Session withCsrf(String csrf) {
@@ -173,7 +173,7 @@ public final class BackofficeAuth {
 		}
 
 		List<Cookie> cookies() {
-			return Arrays.asList(cookie("hy_b_at", this.access), cookie("hy_b_rt", this.refresh), cookie("hy_csrf", this.csrf))
+			return Arrays.asList(cookie("hy_b_at", this.access), cookie("hy_b_rt", this.refresh), cookie("hy_b_csrf", this.csrf))
 				.stream().filter(cookie -> cookie != null).toList();
 		}
 
