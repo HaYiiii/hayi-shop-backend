@@ -47,6 +47,9 @@ public class Tokens {
 	/** {@code aud} of the single-purpose token used by {@code POST /auth/mfa/enroll*} (Decision L2). */
 	static final String MFA_ENROLLMENT_AUDIENCE = "hayi-backoffice-mfa-enrollment";
 
+	/** {@code aud} of the proof returned by {@code POST /api/customer/v1/auth/otp/verify} (Decision AN3). */
+	static final String VERIFICATION_AUDIENCE = "hayi-customer-verification";
+
 	/** Error code of an expired JWT; surfaces as {@code AUTH_TOKEN_EXPIRED} rather than {@code AUTH_REQUIRED}. */
 	static final String EXPIRED = "token_expired";
 
@@ -62,6 +65,8 @@ public class Tokens {
 
 	private final JwtDecoder mfaEnrollmentDecoder;
 
+	private final JwtDecoder verificationDecoder;
+
 	Tokens(SigningKeys keys, SecurityProperties properties, Clock clock) {
 		this.keys = keys;
 		this.properties = properties;
@@ -69,6 +74,7 @@ public class Tokens {
 		this.encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(keys.jwk())));
 		this.passwordChangeDecoder = decoder(PASSWORD_CHANGE_AUDIENCE);
 		this.mfaEnrollmentDecoder = decoder(MFA_ENROLLMENT_AUDIENCE);
+		this.verificationDecoder = decoder(VERIFICATION_AUDIENCE);
 	}
 
 	/** Short-lived access token for a session on {@code surface}; expires with the access cookie. */
@@ -104,6 +110,27 @@ public class Tokens {
 	/** The user a valid, unexpired MFA enrollment token was issued to. */
 	public Optional<UUID> verifyMfaEnrollmentToken(String token) {
 		return subjectOf(this.mfaEnrollmentDecoder, token);
+	}
+
+	/**
+	 * Proof that a phone answered an OTP (Decision AN3): the subject is the verified challenge, which the action it is
+	 * for consumes once.
+	 */
+	public String issueVerificationToken(UUID challengeId, Instant expiresAt) {
+		Instant now = Instant.now(this.clock);
+		return encode(JwtClaimsSet.builder()
+			.issuer(this.properties.issuer())
+			.audience(List.of(VERIFICATION_AUDIENCE))
+			.subject(challengeId.toString())
+			.issuedAt(now)
+			.expiresAt(expiresAt)
+			.id(UUID.randomUUID().toString())
+			.build());
+	}
+
+	/** The challenge a valid, unexpired verification token proves. */
+	public Optional<UUID> verifyVerificationToken(String token) {
+		return subjectOf(this.verificationDecoder, token);
 	}
 
 	private String issueSinglePurpose(String audience, UUID userId, Duration ttl) {

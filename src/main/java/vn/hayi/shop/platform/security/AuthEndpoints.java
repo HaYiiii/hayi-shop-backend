@@ -13,14 +13,15 @@ import jakarta.servlet.http.HttpServletRequest;
 final class AuthEndpoints {
 
 	private static final Set<String> BEFORE_SESSION = Set.of("/login", "/password/first-change", "/mfa/verify",
-			"/mfa/enroll", "/mfa/enroll/confirm");
+			"/mfa/enroll", "/mfa/enroll/confirm", "/otp", "/otp/verify", "/register");
 
 	private static final Set<String> ON_REFRESH_TOKEN = Set.of("/refresh", "/logout");
 
 	/** Ant patterns for {@code permitAll}. */
 	static final String[] PUBLIC_PATTERNS = { "/api/*/v1/auth/login", "/api/*/v1/auth/password/first-change",
 			"/api/*/v1/auth/mfa/verify", "/api/*/v1/auth/mfa/enroll", "/api/*/v1/auth/mfa/enroll/confirm",
-			"/api/*/v1/auth/refresh", "/api/*/v1/auth/logout" };
+			"/api/*/v1/auth/refresh", "/api/*/v1/auth/logout", "/api/customer/v1/auth/otp",
+			"/api/customer/v1/auth/otp/verify", "/api/customer/v1/auth/register" };
 
 	private AuthEndpoints() {
 	}

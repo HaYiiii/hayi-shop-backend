@@ -55,6 +55,19 @@ public class LoginIdentifier {
 		return identifier;
 	}
 
+	/** A phone proven by an OTP (Customer registration, Identity §2.11); {@code phone} is already E.164. */
+	public static LoginIdentifier verifiedPhone(UUID userId, String phone, Instant now) {
+		LoginIdentifier identifier = new LoginIdentifier();
+		identifier.id = UuidV7.generate();
+		identifier.userId = userId;
+		identifier.type = IdentifierType.PHONE;
+		identifier.normalizedValue = phone;
+		identifier.verifiedAt = now;
+		identifier.createdAt = now;
+		identifier.updatedAt = now;
+		return identifier;
+	}
+
 	/** Emails are stored lower-case (ERD 01). */
 	public static String normalizeEmail(String email) {
 		return email.strip().toLowerCase(Locale.ROOT);

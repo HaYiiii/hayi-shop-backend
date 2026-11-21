@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -19,6 +20,12 @@ class PublicRateLimitConfig implements WebMvcConfigurer {
 		this.interceptor = new PublicRateLimitInterceptor(properties,
 				new ClientIpResolver(properties.trustedProxies()),
 				new FixedWindowRateLimiter(Duration.ofMinutes(1), properties.maxTrackedClients(), clock), events);
+	}
+
+	/** The client IP behind the trusted proxies, for any check that counts per IP (W9, Decision AN5). */
+	@Bean
+	ClientIpResolver clientIpResolver(PublicRateLimitProperties properties) {
+		return new ClientIpResolver(properties.trustedProxies());
 	}
 
 	@Override

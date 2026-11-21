@@ -1,7 +1,11 @@
 package vn.hayi.shop.identity.domain;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import jakarta.persistence.Column;
@@ -73,6 +77,73 @@ public class VerificationChallenge {
 		challenge.expiresAt = now.plus(ttl);
 		challenge.createdAt = now;
 		return challenge;
+	}
+
+	/**
+	 * A one-time code sent to {@code target} (Decision AN1). {@code codeHash} comes from {@link #hashCode(UUID, String)}
+	 * with this challenge's id, so the caller generates the id first.
+	 */
+	public static VerificationChallenge otp(UUID id, VerificationPurpose purpose, String target, String codeHash,
+			Instant now, Duration ttl, int maxAttempts) {
+		VerificationChallenge challenge = new VerificationChallenge();
+		challenge.id = id;
+		challenge.purpose = purpose;
+		challenge.target = target;
+		challenge.channel = VerificationChannel.SMS;
+		challenge.codeHash = codeHash;
+		challenge.status = VerificationStatus.PENDING;
+		challenge.maxAttempts = maxAttempts;
+		challenge.expiresAt = now.plus(ttl);
+		challenge.createdAt = now;
+		return challenge;
+	}
+
+	/**
+	 * SHA-256 hex of the code salted with the challenge id: never stored or logged in plaintext (Identity §2.3). A
+	 * 6-digit code is guessable offline from its hash, so the attempt limit is what protects it online.
+	 */
+	public static String hashCode(UUID challengeId, String code) {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+				.digest((challengeId + ":" + code).getBytes(StandardCharsets.UTF_8));
+			return HexFormat.of().formatHex(digest);
+		}
+		catch (NoSuchAlgorithmException ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
+
+	/** Whether {@code code} is this challenge's OTP, compared in constant time. */
+	public boolean matches(String code) {
+		return this.codeHash != null && MessageDigest.isEqual(
+				this.codeHash.getBytes(StandardCharsets.US_ASCII),
+				hashCode(this.id, code).getBytes(StandardCharsets.US_ASCII));
+	}
+
+	/** The right OTP: {@code PENDING → VERIFIED}; the proof is consumed later, once (Identity §2.3). */
+	public void markVerified(Instant now) {
+		if (this.status != VerificationStatus.PENDING) {
+			throw new IllegalStateException("Challenge is " + this.status);
+		}
+		this.status = VerificationStatus.VERIFIED;
+		this.verifiedAt = now;
+	}
+
+	/** {@code VERIFIED → CONSUMED}: the action the proof was for happens now. */
+	public void consumeVerified(Instant now) {
+		if (this.status != VerificationStatus.VERIFIED) {
+			throw new IllegalStateException("Challenge is " + this.status);
+		}
+		this.status = VerificationStatus.CONSUMED;
+		this.consumedAt = now;
+	}
+
+	public boolean isVerified() {
+		return this.status == VerificationStatus.VERIFIED;
+	}
+
+	public String getTarget() {
+		return this.target;
 	}
 
 	/** Pending and not expired; an expired challenge is marked {@code EXPIRED} on the way. */

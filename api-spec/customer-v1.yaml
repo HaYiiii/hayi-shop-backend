@@ -5,6 +5,168 @@ info:
   description: |
     Design-first spec (Decision G3). Endpoints are added per vertical slice from
     HaYi-Shop-Canonical-VI/docs/architecture/api/*.md before implementation.
+    Authentication uses cookies only (API 01-security §3): `hy_c_at` (access JWT), `hy_c_rt` (refresh token).
 servers:
   - url: /api/customer/v1
-paths: {}
+tags:
+  - name: CustomerAuth
+    description: Customer registration by phone OTP (API 01-security §6.1, Identity §2.11, Decision AN)
+security:
+  - accessCookie: []
+paths:
+  /auth/otp:
+    post:
+      tags: [CustomerAuth]
+      operationId: requestOtp
+      summary: Send a one-time code to a phone
+      description: |
+        No sign-in. Always `202`, whether or not the phone has an account (Decision AN1). The phone is Vietnamese
+        (`0…`, `84…`, `+84…`), stored as E.164; anything else → `400` (AN2). A new code ends the open one for the same
+        phone and purpose. 6 digits, valid 5 minutes. Limits: 1 per 60 s and 5 per hour per phone, 20 per hour per IP
+        → `429 RATE_LIMITED` with `Retry-After` (AN5). Only `REGISTRATION` in this release.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OtpRequest' }
+      responses:
+        '202':
+          description: A code was sent if the request was valid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpSent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/otp/verify:
+    post:
+      tags: [CustomerAuth]
+      operationId: verifyOtp
+      summary: Answer a one-time code
+      description: |
+        No sign-in (Decision AN3). Right code → a `verificationToken` valid 10 minutes, usable once. Wrong code →
+        `401 OTP_CODE_INVALID`; the 5th wrong code locks the challenge → `401 OTP_CHALLENGE_LOCKED`; unknown, expired,
+        used or locked challenge → `401 OTP_CHALLENGE_INVALID`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OtpVerifyRequest' }
+      responses:
+        '200':
+          description: The proof.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpVerified' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/register:
+    post:
+      tags: [CustomerAuth]
+      operationId: registerCustomer
+      summary: Create a Customer account with a verified phone
+      description: |
+        No sign-in and no session afterwards: the Customer logs in next (Decision AN4). A new phone needs `password`
+        (8–128 characters, not a common one → else `422 AUTH_PASSWORD_POLICY_VIOLATION`). A phone that already has an
+        account (a Staff member) needs `currentPassword` instead (missing → `422 AUTH_CURRENT_PASSWORD_REQUIRED`, wrong →
+        `401 AUTH_INVALID_CREDENTIALS`, which also spends the proof); no second password is created. Already a
+        Customer → `409 CUSTOMER_ALREADY_REGISTERED`. Invalid, expired, used or wrong-purpose token →
+        `401 VERIFICATION_TOKEN_INVALID`. `referralCode` is accepted and ignored until Loyalty.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Registered' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolated' }
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: hy_c_at
+  responses:
+    ValidationFailed:
+      description: '`VALIDATION_FAILED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: "`OTP_CODE_INVALID`, `OTP_CHALLENGE_LOCKED`, `OTP_CHALLENGE_INVALID`, `VERIFICATION_TOKEN_INVALID` or `AUTH_INVALID_CREDENTIALS`"
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: '`CUSTOMER_ALREADY_REGISTERED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    BusinessRuleViolated:
+      description: "`AUTH_PASSWORD_POLICY_VIOLATION` or `AUTH_CURRENT_PASSWORD_REQUIRED`"
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: '`RATE_LIMITED` (Decision AN5)'
+      headers:
+        Retry-After:
+          description: Seconds until another code may be requested.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    Problem:
+      $ref: './components/common.yaml#/components/schemas/Problem'
+    OtpPurpose:
+      type: string
+      enum: [REGISTRATION]
+    OtpRequest:
+      type: object
+      required: [phone, purpose]
+      properties:
+        phone: { type: string, minLength: 1, maxLength: 20, description: 'Vietnamese phone, e.g. `0901234567`.' }
+        purpose: { $ref: '#/components/schemas/OtpPurpose' }
+    OtpSent:
+      type: object
+      required: [challengeId, expiresAt, resendAfterSeconds]
+      properties:
+        challengeId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+        resendAfterSeconds: { type: integer, format: int64 }
+    OtpVerifyRequest:
+      type: object
+      required: [challengeId, code]
+      properties:
+        challengeId: { type: string, format: uuid }
+        code: { type: string, pattern: '^\d{6}$' }
+    OtpVerified:
+      type: object
+      required: [verificationToken, expiresAt]
+      properties:
+        verificationToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      required: [verificationToken, displayName]
+      properties:
+        verificationToken: { type: string, minLength: 1, maxLength: 2048 }
+        displayName: { type: string, minLength: 1, maxLength: 128, pattern: '[\s\S]*\S[\s\S]*', description: Not blank. }
+        password: { type: [string, 'null'], maxLength: 1024, description: For a new phone. }
+        currentPassword: { type: [string, 'null'], maxLength: 1024, description: For a phone that already has an account. }
+        referralCode: { type: [string, 'null'], maxLength: 32, description: Accepted and ignored until Loyalty. }
+    Registered:
+      type: object
+      required: [customerId]
+      properties:
+        customerId: { type: string, format: uuid }

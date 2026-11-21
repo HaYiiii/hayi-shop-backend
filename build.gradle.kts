@@ -134,6 +134,8 @@ tasks.withType<JavaCompile> {
 // HAYI_SECURITY_SIGNING_KEY (API 01-security §4) and HAYI_SECURITY_MFA_ENCRYPTION_KEY (Decision L3). The MFA key below
 // is a fixed, public dev value so enrolled TOTP secrets survive a restart; never use it anywhere else.
 tasks.bootRun {
+	// `local` enables the dev OTP sender that logs codes (Decision AN6); never active anywhere else.
+	systemProperty("spring.profiles.active", "local")
 	systemProperty("hayi.security.allow-ephemeral-key", "true")
 	systemProperty("hayi.security.mfa-encryption-key", "ZGV2LW9ubHktbWZhLWtleS1ub3QtYS1zZWNyZXQhISE=")
 }

@@ -4,6 +4,7 @@ import static vn.hayi.shop.platform.persistence.UuidBinary.toBytes;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -73,6 +74,17 @@ public class SecurityEventLog implements SecurityEventSink {
 			.params(toBytes(userId), since, NO_BACKOFFICE_ACCESS)
 			.query(Integer.class)
 			.single();
+	}
+
+	/** When events of {@code type} came from {@code ipAddress} since {@code since}, oldest first (Decision AN5). */
+	public List<Instant> occurredFromIpSince(SecurityEventType type, String ipAddress, Instant since) {
+		return this.jdbc.sql("""
+				SELECT occurred_at FROM iam_security_event
+				WHERE event_type = ? AND ip_address = ? AND occurred_at > ? ORDER BY occurred_at
+				""")
+			.params(type.name(), ipAddress, since)
+			.query((rs, n) -> rs.getTimestamp(1).toInstant())
+			.list();
 	}
 
 	@Override

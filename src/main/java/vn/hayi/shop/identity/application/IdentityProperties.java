@@ -15,10 +15,24 @@ import vn.hayi.shop.identity.domain.LoginLockPolicy;
  * @param refreshReuseGrace reuse of a just-rotated refresh token within this window is a concurrent refresh, not theft
  * @param bootstrap one-time Owner bootstrap (Decision K1)
  * @param mfa MFA challenge and step-up limits (Decision L1, L7)
+ * @param otp OTP challenge and sending limits (Decision AN1, AN5)
  */
 @ConfigurationProperties("hayi.identity")
 public record IdentityProperties(@DefaultValue Sessions backoffice, @DefaultValue Login login,
-		@DefaultValue("10s") Duration refreshReuseGrace, @DefaultValue Bootstrap bootstrap, @DefaultValue Mfa mfa) {
+		@DefaultValue("10s") Duration refreshReuseGrace, @DefaultValue Bootstrap bootstrap, @DefaultValue Mfa mfa,
+		@DefaultValue Otp otp) {
+
+	/**
+	 * @param ttl an OTP must be entered within this time
+	 * @param maxAttempts wrong codes that lock a challenge
+	 * @param resendInterval at most one code per target in this time
+	 * @param perTargetPerHour codes per target per hour
+	 * @param perIpPerHour codes requested from one IP per hour
+	 */
+	public record Otp(@DefaultValue("5m") Duration ttl, @DefaultValue("5") int maxAttempts,
+			@DefaultValue("60s") Duration resendInterval, @DefaultValue("5") int perTargetPerHour,
+			@DefaultValue("20") int perIpPerHour) {
+	}
 
 	/**
 	 * @param refreshIdleTtl a refresh token unused this long expires
