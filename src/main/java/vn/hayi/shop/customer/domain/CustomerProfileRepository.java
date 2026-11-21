@@ -1,5 +1,6 @@
 package vn.hayi.shop.customer.domain;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.repository.Repository;
@@ -10,5 +11,7 @@ public interface CustomerProfileRepository extends Repository<CustomerProfile, U
 	CustomerProfile saveAndFlush(CustomerProfile profile);
 
 	boolean existsByUserId(UUID userId);
+
+	Optional<CustomerProfile> findByUserId(UUID userId);
 
 }

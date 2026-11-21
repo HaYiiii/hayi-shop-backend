@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,6 +35,8 @@ import vn.hayi.shop.shared.error.DomainException;
  */
 @Service
 public class CustomerRegistrationService {
+
+	private static final String PHONE_UNIQUE_KEY = "uk_iam_login_identifier__type_value";
 
 	private final Tokens tokens;
 
@@ -128,7 +132,18 @@ public class CustomerRegistrationService {
 			PasswordPolicy.checkCustomer(request.password());
 			User user = this.users.save(User.create(now));
 			userId = user.getId();
-			this.identifiers.save(LoginIdentifier.verifiedPhone(userId, phone, now));
+			try {
+				this.identifiers.saveAndFlush(LoginIdentifier.verifiedPhone(userId, phone, now));
+			}
+			catch (DataIntegrityViolationException ex) {
+				// Another registration of the same new phone committed between the lookup and this insert (review of
+				// PR #101); any other violation is a bug.
+				String message = NestedExceptionUtils.getMostSpecificCause(ex).getMessage();
+				if (message != null && message.contains(PHONE_UNIQUE_KEY)) {
+					throw alreadyRegistered();
+				}
+				throw ex;
+			}
 			this.credentials.save(UserCredential.chosen(userId, this.passwordEncoder.encode(request.password()), now));
 		}
 		else {
@@ -148,6 +163,8 @@ public class CustomerRegistrationService {
 				proof.consumeVerified(now);
 				throw new WrongCurrentPassword();
 			}
+			// The OTP just proved this phone, so a Staff phone entered without verification is verified now.
+			existing.get().markVerified(now);
 		}
 		UUID customerId = this.profiles.create(userId, request.displayName());
 		proof.consumeVerified(now);

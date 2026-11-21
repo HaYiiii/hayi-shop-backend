@@ -33,6 +33,7 @@ class OwnerBootstrapRunnerTest {
 	private OwnerBootstrapRunner runner(String email, String password) {
 		IdentityProperties properties = new IdentityProperties(
 				new IdentityProperties.Sessions(Duration.ofHours(12), Duration.ofDays(7)),
+				new IdentityProperties.CustomerSessions(Duration.ofDays(30), Duration.ofDays(180)),
 				new IdentityProperties.Login(5, Duration.ofMinutes(15), Duration.ofMinutes(15)), Duration.ofSeconds(10),
 				new IdentityProperties.Bootstrap(email, password),
 				new IdentityProperties.Mfa(Duration.ofMinutes(5), 5, 5, Duration.ofMinutes(15), 10,

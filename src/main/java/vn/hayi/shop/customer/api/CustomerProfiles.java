@@ -1,5 +1,6 @@
 package vn.hayi.shop.customer.api;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -9,6 +10,12 @@ import java.util.UUID;
 public interface CustomerProfiles {
 
 	boolean existsForUser(UUID userId);
+
+	/** The user's profile, for {@code GET /auth/me} (Decision AO2). */
+	Optional<Summary> findByUser(UUID userId);
+
+	record Summary(UUID customerId, String displayName) {
+	}
 
 	/**
 	 * @return the new {@code customerId}

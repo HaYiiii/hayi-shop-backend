@@ -68,6 +68,14 @@ public class LoginIdentifier {
 		return identifier;
 	}
 
+	/** The holder proved it (an OTP answered on registration); a verified identifier stays as it was. */
+	public void markVerified(Instant now) {
+		if (this.verifiedAt == null) {
+			this.verifiedAt = now;
+			this.updatedAt = now;
+		}
+	}
+
 	/** Emails are stored lower-case (ERD 01). */
 	public static String normalizeEmail(String email) {
 		return email.strip().toLowerCase(Locale.ROOT);

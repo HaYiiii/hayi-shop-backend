@@ -2,27 +2,50 @@ package vn.hayi.shop.identity.web.customer;
 
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import vn.hayi.shop.identity.application.CustomerAccountService;
 import vn.hayi.shop.identity.application.CustomerRegistrationService;
+import vn.hayi.shop.identity.application.LoginResult;
+import vn.hayi.shop.identity.application.LoginService;
+import vn.hayi.shop.identity.application.RefreshResult;
+import vn.hayi.shop.identity.application.SessionService;
+import vn.hayi.shop.identity.application.SessionTokens;
 import vn.hayi.shop.identity.application.OtpService;
+import vn.hayi.shop.platform.security.AuthCookies;
+import vn.hayi.shop.platform.security.AuthRateLimiter;
+import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.security.ClientInfo;
+import vn.hayi.shop.platform.security.CsrfTokens;
+import vn.hayi.shop.platform.security.Surface;
 import vn.hayi.shop.platform.security.ClientIpResolver;
 import vn.hayi.shop.platform.web.InvalidFieldsException;
 import vn.hayi.shop.platform.web.spec.customer.api.CustomerAuthApi;
+import vn.hayi.shop.platform.web.spec.customer.model.CustomerLoginRequestDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CustomerLoginResponseDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CustomerMeDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpSentDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpVerifiedDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpVerifyRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.RegisterRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.RegisteredDto;
+import vn.hayi.shop.shared.error.CommonErrorCode;
+import vn.hayi.shop.shared.error.DomainException;
+import vn.hayi.shop.shared.error.ThrottledException;
 
-/** Customer registration by phone OTP (API 01-security §6.1, Identity §2.11, Decision AN). No sign-in needed. */
+/**
+ * Customer auth surface (API 01-security §6.1): registration by phone OTP (Decision AN), login, refresh, logout, CSRF
+ * and the caller (Decision AO).
+ */
 @RestController
 class CustomerAuthController implements CustomerAuthApi {
 
@@ -34,13 +57,100 @@ class CustomerAuthController implements CustomerAuthApi {
 
 	private final HttpServletRequest request;
 
+	private final LoginService login;
+
+	private final SessionService sessions;
+
+	private final CustomerAccountService accounts;
+
+	private final AuthCookies cookies;
+
+	private final CsrfTokens csrfTokens;
+
+	private final AuthRateLimiter rateLimits;
+
 	CustomerAuthController(OtpService otps, CustomerRegistrationService registrations, ClientIpResolver ips,
-			HttpServletRequest request) {
+			HttpServletRequest request, LoginService login, SessionService sessions, CustomerAccountService accounts,
+			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits) {
 		this.otps = otps;
 		this.registrations = registrations;
 		this.ips = ips;
 		this.request = request;
+		this.login = login;
+		this.sessions = sessions;
+		this.accounts = accounts;
+		this.cookies = cookies;
+		this.csrfTokens = csrfTokens;
+		this.rateLimits = rateLimits;
 	}
+
+	// --- session (Decision AO) ---------------------------------------------------------------------------------
+
+	@Override
+	public ResponseEntity<CustomerLoginResponseDto> loginCustomer(CustomerLoginRequestDto body) {
+		ClientInfo client = client();
+		this.rateLimits.checkLogin(Surface.CUSTOMER, client);
+		return switch (this.login.loginCustomer(body.getPhone(), body.getPassword(), client)) {
+			case LoginResult.Authenticated authenticated -> ResponseEntity.ok()
+				.headers(setCookies(sessionCookies(authenticated.tokens())))
+				.body(new CustomerLoginResponseDto(false, null));
+			case LoginResult.Rejected rejected -> throw new DomainException(rejected.code(), "Login rejected");
+			case LoginResult.Locked locked -> throw new ThrottledException(locked.code(), "Login locked",
+					locked.retryAfter(), Math.max(1, (locked.retryAfter().toSeconds() + 59) / 60));
+			default -> throw new IllegalStateException("Customer login has no further step");
+		};
+	}
+
+	@Override
+	public ResponseEntity<Void> refreshCustomer(String refreshToken, String csrfHeader) {
+		ClientInfo client = client();
+		this.rateLimits.checkRefresh(Surface.CUSTOMER, csrfSession(), client);
+		return switch (this.sessions.refresh(Surface.CUSTOMER, refreshToken, csrfSession(), client)) {
+			case RefreshResult.Rotated rotated ->
+				ResponseEntity.noContent().headers(setCookies(sessionCookies(rotated.tokens()))).build();
+			case RefreshResult.Rejected rejected -> throw new DomainException(rejected.code(), "Refresh rejected");
+		};
+	}
+
+	@Override
+	public ResponseEntity<Void> logoutCustomer(String refreshToken, String csrfHeader) {
+		if (!this.sessions.logout(Surface.CUSTOMER, refreshToken, csrfSession(), client())) {
+			throw new DomainException(CommonErrorCode.CSRF_INVALID, "CSRF token of another session");
+		}
+		return ResponseEntity.noContent().headers(setCookies(this.cookies.cleared(Surface.CUSTOMER))).build();
+	}
+
+	@Override
+	public ResponseEntity<Void> issueCustomerCsrfToken() {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		ResponseCookie csrf = this.cookies.csrf(this.csrfTokens.issue(session.sessionId()), null);
+		return ResponseEntity.noContent().headers(setCookies(List.of(csrf))).build();
+	}
+
+	@Override
+	public ResponseEntity<CustomerMeDto> getCustomerMe() {
+		CustomerAccountService.CustomerAccount account = this.accounts.account(AuthenticatedSession.require().userId());
+		return ResponseEntity.ok(new CustomerMeDto(account.userId(), account.customerId(), account.displayName(),
+				account.phoneMasked()));
+	}
+
+	private List<ResponseCookie> sessionCookies(SessionTokens tokens) {
+		return this.cookies.session(Surface.CUSTOMER, tokens.accessToken(), tokens.refreshToken(),
+				tokens.refreshLifetime(), tokens.csrfToken());
+	}
+
+	private static HttpHeaders setCookies(List<ResponseCookie> cookies) {
+		HttpHeaders headers = new HttpHeaders();
+		cookies.forEach(cookie -> headers.add(HttpHeaders.SET_COOKIE, cookie.toString()));
+		return headers;
+	}
+
+	/** Set by the CSRF filter once the double-submit token checked out. */
+	private UUID csrfSession() {
+		return (UUID) this.request.getAttribute(CsrfTokens.VERIFIED_SESSION_ATTRIBUTE);
+	}
+
+	// --- registration (Decision AN) ----------------------------------------------------------------------------
 
 	@Override
 	public ResponseEntity<OtpSentDto> requestOtp(OtpRequestDto body) {

@@ -17,6 +17,7 @@ import vn.hayi.shop.identity.infrastructure.CachedSessionStatus;
 import vn.hayi.shop.identity.infrastructure.SecurityEventLog;
 import vn.hayi.shop.identity.infrastructure.SecurityEventType;
 import vn.hayi.shop.platform.security.ClientInfo;
+import vn.hayi.shop.platform.security.Surface;
 import vn.hayi.shop.shared.error.CommonErrorCode;
 
 /**
@@ -59,16 +60,20 @@ public class SessionService {
 	/**
 	 * Rotates {@code refreshToken}. A token already rotated is reuse: within the grace window the caller gets the
 	 * family's current token again; later, the whole session is revoked ({@code REFRESH_TOKEN_REUSE_DETECTED}).
+	 * @param surface the surface the request came to; a token of another persona's session is not found (AO3)
 	 * @param csrfSessionId session the request's CSRF token belongs to; must be this token's session
 	 */
 	@Transactional
-	public RefreshResult refresh(String refreshToken, UUID csrfSessionId, ClientInfo client) {
+	public RefreshResult refresh(Surface surface, String refreshToken, UUID csrfSessionId, ClientInfo client) {
 		Instant now = Instant.now(this.clock);
 		Optional<RefreshToken> found = find(refreshToken);
 		if (found.isEmpty()) {
 			return new RefreshResult.Rejected(CommonErrorCode.AUTH_REQUIRED);
 		}
 		UserSession session = this.sessions.findByIdForUpdate(found.get().getSessionId()).orElseThrow();
+		if (session.getPersona() != surface.persona()) {
+			return new RefreshResult.Rejected(CommonErrorCode.AUTH_REQUIRED);
+		}
 		if (!session.getId().equals(csrfSessionId)) {
 			this.securityEvents.csrfValidationFailed(session.getUserId(), session.getId(), client);
 			return new RefreshResult.Rejected(CommonErrorCode.CSRF_INVALID);
@@ -100,10 +105,11 @@ public class SessionService {
 	 * @return {@code false} when the CSRF token belongs to another session
 	 */
 	@Transactional
-	public boolean logout(String refreshToken, UUID csrfSessionId, ClientInfo client) {
+	public boolean logout(Surface surface, String refreshToken, UUID csrfSessionId, ClientInfo client) {
 		Optional<UserSession> found = find(refreshToken).map(RefreshToken::getSessionId)
 			.or(() -> Optional.ofNullable(csrfSessionId))
-			.flatMap(this.sessions::findByIdForUpdate);
+			.flatMap(this.sessions::findByIdForUpdate)
+			.filter(session -> session.getPersona() == surface.persona());
 		if (found.isEmpty()) {
 			return true;
 		}

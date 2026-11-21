@@ -106,6 +106,10 @@ public class UserSession {
 		return this.userId;
 	}
 
+	public Persona getPersona() {
+		return this.persona;
+	}
+
 	public Instant getExpiresAt() {
 		return this.expiresAt;
 	}

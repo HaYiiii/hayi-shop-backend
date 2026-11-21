@@ -27,6 +27,9 @@ public class SecurityEventLog implements SecurityEventSink {
 	/** {@code LOGIN_FAILED} reason for a correct password on an account without Backoffice access. */
 	public static final String NO_BACKOFFICE_ACCESS = "NO_BACKOFFICE_ACCESS";
 
+	/** {@code LOGIN_FAILED} reason for a correct password on an account without a CustomerProfile (Decision AO1). */
+	public static final String NO_CUSTOMER_PROFILE = "NO_CUSTOMER_PROFILE";
+
 	/** {@code MFA_FAILED} stage of a wrong code answering a login challenge, the only one counted for the lock. */
 	public static final String LOGIN_STAGE = "LOGIN";
 
@@ -63,15 +66,15 @@ public class SecurityEventLog implements SecurityEventSink {
 
 	/**
 	 * Wrong-password logins of the user after {@code since}. A correct password without Backoffice access is a
-	 * {@code LOGIN_FAILED} too, but does not count (Decision K2).
+	 * {@code LOGIN_FAILED} too, but does not count (Decision K2); nor does one without a CustomerProfile (AO1).
 	 */
 	public int countLoginFailures(UUID userId, Instant since) {
 		return this.jdbc.sql("""
 				SELECT COUNT(*) FROM iam_security_event
 				WHERE user_id = ? AND event_type = 'LOGIN_FAILED' AND occurred_at > ?
-				  AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.reason')), '') <> ?
+				  AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.reason')), '') NOT IN (?, ?)
 				""")
-			.params(toBytes(userId), since, NO_BACKOFFICE_ACCESS)
+			.params(toBytes(userId), since, NO_BACKOFFICE_ACCESS, NO_CUSTOMER_PROFILE)
 			.query(Integer.class)
 			.single();
 	}

@@ -4,6 +4,9 @@ spring:
     active: test   # enables the dev OTP sender (Decision AN6)
 hayi:
   rate-limit:
+    auth:                       # same reason; AuthRateLimitTest sets its own limits (Decision AO4)
+      login-per-minute: 1000000
+      refresh-per-minute: 1000000
     public:                     # every MockMvc call comes from 127.0.0.1; PublicRateLimitTest sets its own limits
       get-per-minute: 1000000
       resolve-per-minute: 1000000

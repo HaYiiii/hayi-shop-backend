@@ -96,7 +96,7 @@ public class OtpService {
 		this.transactions.executeWithoutResult(status -> {
 			this.challenges.expireOpenForTarget(phone, purpose, VerificationStatus.PENDING,
 					VerificationStatus.EXPIRED);
-			this.challenges.save(VerificationChallenge.otp(id, purpose, phone, VerificationChallenge.hashCode(id, code),
+			this.challenges.save(VerificationChallenge.otp(id, purpose, phone, VerificationChallenge.hashOtp(id, code),
 					now, this.settings.ttl(), this.settings.maxAttempts()));
 			this.securityEvents.record(SecurityEventType.OTP_REQUESTED, null, null, null, client,
 					metadata(purpose, phone));

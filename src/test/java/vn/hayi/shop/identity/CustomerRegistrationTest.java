@@ -3,11 +3,13 @@ package vn.hayi.shop.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,7 +31,10 @@ import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
 import vn.hayi.shop.customer.api.CustomerProfiles;
+import vn.hayi.shop.identity.domain.IdentifierType;
+import vn.hayi.shop.identity.domain.LoginIdentifierRepository;
 import vn.hayi.shop.platform.persistence.UuidBinary;
+import vn.hayi.shop.platform.security.Tokens;
 import vn.hayi.shop.shared.id.UuidV7;
 
 /**
@@ -63,6 +68,12 @@ class CustomerRegistrationTest {
 
 	@MockitoSpyBean
 	CustomerProfiles profiles;
+
+	@MockitoSpyBean
+	LoginIdentifierRepository identifiers;
+
+	@Autowired
+	Tokens tokens;
 
 	@AfterEach
 	void resetClock() {
@@ -254,6 +265,73 @@ class CustomerRegistrationTest {
 
 		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM iam_login_identifier WHERE normalized_value = ?")
 			.param("+84" + national.substring(1)).query(Integer.class).single()).isZero();
+	}
+
+	// --- review of PR #101 ------------------------------------------------------------------------------------
+
+	@Test
+	void twoRegistrationsOfOneNewPhoneAtOnceEndInAConflictNotAnError() throws Exception {
+		String national = freshNationalPhone();
+		String e164 = "+84" + national.substring(1);
+		String ip = freshIp();
+		assertThat(register(otpToken(national, ip), "Hà", "ca phe sua da", null, ip).getStatus()).isEqualTo(201);
+		this.clock.advance(Duration.ofSeconds(61));
+		String second = otpToken(national, freshIp());
+		// The second request looked the phone up before the first one committed.
+		doReturn(Optional.empty()).when(this.identifiers).findByTypeAndNormalizedValue(IdentifierType.PHONE, e164);
+
+		assertProblem(register(second, "Hà", "ca phe sua da", null, ip), 409, "CUSTOMER_ALREADY_REGISTERED");
+		assertThat(this.jdbc.sql("SELECT COUNT(*) FROM iam_login_identifier WHERE normalized_value = ?")
+			.param(e164).query(Integer.class).single()).isEqualTo(1);
+	}
+
+	@Test
+	void anUnverifiedStaffPhoneIsVerifiedByTheOtp() throws Exception {
+		UUID staff = this.fixtures.branchStaff();
+		String national = freshNationalPhone();
+		addPhone(staff, "+84" + national.substring(1));
+		this.jdbc.sql("UPDATE iam_login_identifier SET verified_at = NULL WHERE normalized_value = ?")
+			.param("+84" + national.substring(1)).update();
+		String ip = freshIp();
+
+		assertThat(register(otpToken(national, ip), "Minh", null, IdentityFixtures.PASSWORD, ip).getStatus())
+			.isEqualTo(201);
+
+		assertThat(this.jdbc.sql("SELECT verified_at IS NOT NULL FROM iam_login_identifier WHERE normalized_value = ?")
+			.param("+84" + national.substring(1)).query(Boolean.class).single()).isTrue();
+	}
+
+	@Test
+	void aDisabledUserCannotAddACustomerProfile() throws Exception {
+		UUID staff = this.fixtures.branchStaff();
+		String national = freshNationalPhone();
+		addPhone(staff, "+84" + national.substring(1));
+		this.jdbc.sql("UPDATE iam_user SET status = 'DISABLED' WHERE id = ?").param(UuidBinary.toBytes(staff)).update();
+		String ip = freshIp();
+
+		assertProblem(register(otpToken(national, ip), "Minh", null, IdentityFixtures.PASSWORD, ip), 401,
+				"AUTH_INVALID_CREDENTIALS");
+	}
+
+	@Test
+	void anMfaChallengeCannotBeAnsweredAsAnOtp() throws Exception {
+		UUID challenge = UuidV7.generate();
+		Instant now = Instant.now();
+		this.jdbc.sql("""
+				INSERT INTO iam_verification_challenge (id, purpose, target, channel, status, attempt_count, max_attempts,
+				  expires_at, created_at, version)
+				VALUES (?, 'MFA_LOGIN', 'someone@hayi.test', 'TOTP', 'PENDING', 0, 5, ?, ?, 0)
+				""").params(UuidBinary.toBytes(challenge), now.plusSeconds(300), now).update();
+
+		assertProblem(verifyResponse(challenge.toString(), "123456", freshIp()), 401, "OTP_CHALLENGE_INVALID");
+	}
+
+	@Test
+	void aTokenForAnotherPurposeIsNotAProof() throws Exception {
+		String otherAudience = this.tokens.issuePasswordChangeToken(UuidV7.generate());
+
+		assertProblem(register(otherAudience, "Hà", "ca phe sua da", null, freshIp()), 401,
+				"VERIFICATION_TOKEN_INVALID");
 	}
 
 	// --- helpers ------------------------------------------------------------------------------------------------

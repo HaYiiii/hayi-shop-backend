@@ -80,7 +80,7 @@ public class VerificationChallenge {
 	}
 
 	/**
-	 * A one-time code sent to {@code target} (Decision AN1). {@code codeHash} comes from {@link #hashCode(UUID, String)}
+	 * A one-time code sent to {@code target} (Decision AN1). {@code codeHash} comes from {@link #hashOtp(UUID, String)}
 	 * with this challenge's id, so the caller generates the id first.
 	 */
 	public static VerificationChallenge otp(UUID id, VerificationPurpose purpose, String target, String codeHash,
@@ -102,7 +102,7 @@ public class VerificationChallenge {
 	 * SHA-256 hex of the code salted with the challenge id: never stored or logged in plaintext (Identity §2.3). A
 	 * 6-digit code is guessable offline from its hash, so the attempt limit is what protects it online.
 	 */
-	public static String hashCode(UUID challengeId, String code) {
+	public static String hashOtp(UUID challengeId, String code) {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256")
 				.digest((challengeId + ":" + code).getBytes(StandardCharsets.UTF_8));
@@ -117,7 +117,7 @@ public class VerificationChallenge {
 	public boolean matches(String code) {
 		return this.codeHash != null && MessageDigest.isEqual(
 				this.codeHash.getBytes(StandardCharsets.US_ASCII),
-				hashCode(this.id, code).getBytes(StandardCharsets.US_ASCII));
+				hashOtp(this.id, code).getBytes(StandardCharsets.US_ASCII));
 	}
 
 	/** The right OTP: {@code PENDING → VERIFIED}; the proof is consumed later, once (Identity §2.3). */

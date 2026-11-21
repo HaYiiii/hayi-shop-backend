@@ -89,12 +89,125 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/BusinessRuleViolated' }
+  /auth/login:
+    post:
+      tags: [CustomerAuth]
+      operationId: loginCustomer
+      summary: Log in with phone and password
+      description: |
+        On success sets `hy_c_at`, `hy_c_rt` and `hy_csrf` (Decision AO1). A malformed or unknown phone, a wrong
+        password or an account without a Customer profile → `401 AUTH_INVALID_CREDENTIALS`; locked after 5 failures
+        within a sliding 15 minutes → `429 AUTH_LOGIN_LOCKED` with `Retry-After` (K2). 20 attempts per minute per IP →
+        `429 RATE_LIMITED` (AO4). `verificationRequired` is reserved for the risk engine (`202`), always `false` now.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerLoginRequest' }
+      responses:
+        '200':
+          description: Logged in.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerLoginResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      tags: [CustomerAuth]
+      operationId: refreshCustomer
+      summary: Rotate the refresh token
+      description: |
+        As the Backoffice (API 01-security §5, Decision AO3): 30 days idle, 180 days absolute, a 10 s grace for a
+        just-rotated token, later reuse revokes the session (`401 AUTH_SESSION_REVOKED`). A refresh token of another
+        surface's session → `401 AUTH_REQUIRED`. 30 per minute per session → `429 RATE_LIMITED` (AO4). Requires
+        `X-CSRF-Token`.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RefreshTokenCookie'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Tokens rotated.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/logout:
+    post:
+      tags: [CustomerAuth]
+      operationId: logoutCustomer
+      summary: Revoke the current session
+      description: Revokes the session and clears the Customer cookies. Idempotent. Requires `X-CSRF-Token`.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RefreshTokenCookie'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session revoked and cookies cleared.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/csrf:
+    get:
+      tags: [CustomerAuth]
+      operationId: issueCustomerCsrfToken
+      summary: Re-issue the CSRF cookie
+      description: Sets a fresh `hy_csrf` bound to the current session (API 01-security §3.1).
+      responses:
+        '204':
+          description: CSRF cookie set.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookie' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/me:
+    get:
+      tags: [CustomerAuth]
+      operationId: getCustomerMe
+      summary: The signed-in Customer
+      description: '`{ userId, customerId, displayName, phoneMasked }`, every key present (Decision AO2).'
+      responses:
+        '200':
+          description: The caller.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 components:
   securitySchemes:
     accessCookie:
       type: apiKey
       in: cookie
       name: hy_c_at
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: hy_c_rt
+  parameters:
+    RefreshTokenCookie:
+      name: hy_c_rt
+      in: cookie
+      required: false
+      description: Opaque refresh token; missing or unknown → `401 AUTH_REQUIRED`.
+      schema: { type: string, maxLength: 512 }
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
+      schema: { type: string, maxLength: 512 }
+  headers:
+    SetCookie:
+      description: Auth cookies (API 01-security §3).
+      schema: { type: string }
   responses:
     ValidationFailed:
       description: '`VALIDATION_FAILED`'
@@ -102,7 +215,12 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
-      description: "`OTP_CODE_INVALID`, `OTP_CHALLENGE_LOCKED`, `OTP_CHALLENGE_INVALID`, `VERIFICATION_TOKEN_INVALID` or `AUTH_INVALID_CREDENTIALS`"
+      description: "`AUTH_REQUIRED`, `AUTH_TOKEN_EXPIRED`, `AUTH_SESSION_REVOKED`, `AUTH_INVALID_CREDENTIALS`, `OTP_CODE_INVALID`, `OTP_CHALLENGE_LOCKED`, `OTP_CHALLENGE_INVALID` or `VERIFICATION_TOKEN_INVALID`"
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: '`CSRF_INVALID`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -117,10 +235,10 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     RateLimited:
-      description: '`RATE_LIMITED` (Decision AN5)'
+      description: '`RATE_LIMITED` (Decision AN5, AO4) or `AUTH_LOGIN_LOCKED` (K2)'
       headers:
         Retry-After:
-          description: Seconds until another code may be requested.
+          description: Seconds until the request may be retried.
           schema: { type: integer }
       content:
         application/problem+json:
@@ -170,3 +288,23 @@ components:
       required: [customerId]
       properties:
         customerId: { type: string, format: uuid }
+    CustomerLoginRequest:
+      type: object
+      required: [phone, password]
+      properties:
+        phone: { type: string, minLength: 1, maxLength: 20 }
+        password: { type: string, minLength: 1, maxLength: 1024 }
+    CustomerLoginResponse:
+      type: object
+      required: [verificationRequired, challengeId]
+      properties:
+        verificationRequired: { type: boolean }
+        challengeId: { type: [string, 'null'], format: uuid }
+    CustomerMe:
+      type: object
+      required: [userId, customerId, displayName, phoneMasked]
+      properties:
+        userId: { type: string, format: uuid }
+        customerId: { type: [string, 'null'], format: uuid }
+        displayName: { type: [string, 'null'] }
+        phoneMasked: { type: [string, 'null'], description: 'e.g. `+8490*****567`' }
