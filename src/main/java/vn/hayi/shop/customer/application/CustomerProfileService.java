@@ -1,6 +1,7 @@
 package vn.hayi.shop.customer.application;
 
 import java.time.Clock;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.core.NestedExceptionUtils;
@@ -34,6 +35,13 @@ class CustomerProfileService implements CustomerProfiles {
 	@Transactional(readOnly = true, propagation = Propagation.SUPPORTS)
 	public boolean existsForUser(UUID userId) {
 		return this.profiles.existsByUserId(userId);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<Summary> findByUser(UUID userId) {
+		return this.profiles.findByUserId(userId)
+			.map(profile -> new Summary(profile.getId(), profile.getDisplayName()));
 	}
 
 	@Override

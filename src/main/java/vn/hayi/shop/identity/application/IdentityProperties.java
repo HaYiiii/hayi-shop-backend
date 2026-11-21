@@ -11,6 +11,7 @@ import vn.hayi.shop.identity.domain.LoginLockPolicy;
  * Session and login settings (API 01-security §5, §6.3).
  *
  * @param backoffice Backoffice session lifetimes
+ * @param customer Customer session lifetimes (API 01-security §5, Decision AO3)
  * @param login temporary lock after repeated failures
  * @param refreshReuseGrace reuse of a just-rotated refresh token within this window is a concurrent refresh, not theft
  * @param bootstrap one-time Owner bootstrap (Decision K1)
@@ -18,7 +19,8 @@ import vn.hayi.shop.identity.domain.LoginLockPolicy;
  * @param otp OTP challenge and sending limits (Decision AN1, AN5)
  */
 @ConfigurationProperties("hayi.identity")
-public record IdentityProperties(@DefaultValue Sessions backoffice, @DefaultValue Login login,
+public record IdentityProperties(@DefaultValue Sessions backoffice,
+		@DefaultValue CustomerSessions customer, @DefaultValue Login login,
 		@DefaultValue("10s") Duration refreshReuseGrace, @DefaultValue Bootstrap bootstrap, @DefaultValue Mfa mfa,
 		@DefaultValue Otp otp) {
 
@@ -38,6 +40,16 @@ public record IdentityProperties(@DefaultValue Sessions backoffice, @DefaultValu
 	 * @param refreshIdleTtl a refresh token unused this long expires
 	 * @param absoluteLifetime the session ends this long after login, whatever the activity
 	 */
+	/** Customer lifetimes, with their own defaults (API 01-security §5). */
+	public record CustomerSessions(@DefaultValue("30d") Duration refreshIdleTtl,
+			@DefaultValue("180d") Duration absoluteLifetime) {
+
+		public Sessions asSessions() {
+			return new Sessions(this.refreshIdleTtl, this.absoluteLifetime);
+		}
+
+	}
+
 	public record Sessions(@DefaultValue("12h") Duration refreshIdleTtl, @DefaultValue("7d") Duration absoluteLifetime) {
 	}
 

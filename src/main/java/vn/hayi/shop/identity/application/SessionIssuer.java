@@ -60,25 +60,46 @@ class SessionIssuer {
 	 * password and MFA failure windows restart here (Decision K2, L1).
 	 */
 	SessionTokens openBackofficeSession(UUID userId, ClientInfo client, Instant now) {
+		return openSession(Surface.BACKOFFICE, userId, client, now);
+	}
+
+	/** A new Customer session (persona CUSTOMER, channel CUSTOMER_WEB, Decision AO3). */
+	SessionTokens openCustomerSession(UUID userId, ClientInfo client, Instant now) {
+		return openSession(Surface.CUSTOMER, userId, client, now);
+	}
+
+	private SessionTokens openSession(Surface surface, UUID userId, ClientInfo client, Instant now) {
 		this.users.findByIdForUpdate(userId).orElseThrow().registerSuccessfulLogin(now);
-		UserSession session = this.sessions.save(UserSession.open(userId, Persona.STAFF, SessionChannel.BACKOFFICE_WEB,
-				client.ipAddress(), client.userAgent(), now, this.properties.backoffice().absoluteLifetime()));
+		SessionChannel channel = (surface == Surface.CUSTOMER) ? SessionChannel.CUSTOMER_WEB
+				: SessionChannel.BACKOFFICE_WEB;
+		UserSession session = this.sessions.save(UserSession.open(userId, surface.persona(), channel,
+				client.ipAddress(), client.userAgent(), now, lifetimes(surface.persona()).absoluteLifetime()));
 		RefreshToken refreshToken = newRefreshToken(session, now);
 		this.securityEvents.record(SecurityEventType.SESSION_CREATED, userId, session.getId(), client);
 		return tokensFor(session, refreshToken, now);
 	}
 
+	/** Lifetimes of the persona's surface (API 01-security §5). */
+	private IdentityProperties.Sessions lifetimes(Persona persona) {
+		return (persona == Persona.CUSTOMER) ? this.properties.customer().asSessions() : this.properties.backoffice();
+	}
+
+	/** The surface whose tokens a session of {@code persona} carries. */
+	static Surface surfaceOf(Persona persona) {
+		return (persona == Persona.CUSTOMER) ? Surface.CUSTOMER : Surface.BACKOFFICE;
+	}
+
 	/** A new refresh token, idle-limited and never outliving the session. */
 	RefreshToken newRefreshToken(UserSession session, Instant now) {
 		UUID id = UuidV7.generate();
-		Instant idleExpiry = now.plus(this.properties.backoffice().refreshIdleTtl());
+		Instant idleExpiry = now.plus(lifetimes(session.getPersona()).refreshIdleTtl());
 		Instant expiresAt = idleExpiry.isBefore(session.getExpiresAt()) ? idleExpiry : session.getExpiresAt();
 		return this.refreshTokens.save(RefreshToken.issue(id, session.getId(), RefreshTokenCodec.hash(this.codec.encode(id)), now, expiresAt));
 	}
 
 	SessionTokens tokensFor(UserSession session, RefreshToken refreshToken, Instant now) {
 		return new SessionTokens(
-				this.tokens.issueAccessToken(Surface.BACKOFFICE, session.getUserId(), session.getId()),
+				this.tokens.issueAccessToken(surfaceOf(session.getPersona()), session.getUserId(), session.getId()),
 				this.codec.encode(refreshToken.getId()), Duration.between(now, refreshToken.getExpiresAt()),
 				this.csrfTokens.issue(session.getId()));
 	}

@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import vn.hayi.shop.identity.application.IdentityProperties.Mfa;
+import vn.hayi.shop.customer.api.CustomerProfiles;
 import vn.hayi.shop.identity.domain.IdentifierType;
+import vn.hayi.shop.identity.domain.PhoneNumbers;
 import vn.hayi.shop.identity.domain.IdentityErrorCode;
 import vn.hayi.shop.identity.domain.LoginIdentifier;
 import vn.hayi.shop.identity.domain.LoginIdentifierRepository;
@@ -71,13 +73,16 @@ public class LoginService {
 
 	private final Clock clock;
 
+	private final CustomerProfiles customerProfiles;
+
 	/** Compared against when the user does not exist, so both failures take the same time. */
 	private final String unknownUserHash;
 
 	LoginService(LoginIdentifierRepository identifiers, UserRepository users, UserCredentialRepository credentials,
 			VerificationChallengeRepository challenges, MfaCodes mfaCodes, RoleQueries roles, SessionIssuer sessionIssuer,
 			Tokens tokens, PasswordEncoder passwordEncoder, SecurityEventLog securityEvents, IdentityProperties properties,
-			SecurityProperties securityProperties, Clock clock) {
+			SecurityProperties securityProperties, Clock clock, CustomerProfiles customerProfiles) {
+		this.customerProfiles = customerProfiles;
 		this.identifiers = identifiers;
 		this.users = users;
 		this.credentials = credentials;
@@ -141,6 +146,43 @@ public class LoginService {
 		}
 		this.securityEvents.record(SecurityEventType.LOGIN_SUCCESS, user.getId(), null, client);
 		return new LoginResult.Authenticated(this.sessionIssuer.openBackofficeSession(user.getId(), client, now));
+	}
+
+	/**
+	 * Customer login by phone and password (Decision AO1). A phone that is malformed or unknown, a wrong password and
+	 * an account without a CustomerProfile all answer {@code AUTH_INVALID_CREDENTIALS}; the lock is the same per-user
+	 * lock as the Backoffice (K2). Customers have no MFA step in v1.
+	 */
+	@Transactional
+	public LoginResult loginCustomer(String phone, String password, ClientInfo client) {
+		Instant now = Instant.now(this.clock);
+		Optional<String> normalized = PhoneNumbers.normalize(phone);
+		Optional<User> found = normalized
+			.flatMap(value -> this.identifiers.findByTypeAndNormalizedValue(IdentifierType.PHONE, value))
+			.flatMap(identifier -> this.users.findByIdForUpdate(identifier.getUserId()));
+		if (found.isEmpty()) {
+			this.passwordEncoder.matches(password, this.unknownUserHash);
+			this.securityEvents.record(SecurityEventType.LOGIN_FAILED, null, null,
+					normalized.map(PhoneNumbers::mask).orElse("***"), client, null);
+			return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
+		}
+		User user = found.get();
+		if (user.isLocked(now)) {
+			this.securityEvents.record(SecurityEventType.LOGIN_BLOCKED, user.getId(), null, client);
+			return new LoginResult.Locked(IdentityErrorCode.AUTH_LOGIN_LOCKED, user.lockRemaining(now));
+		}
+		UserCredential credential = this.credentials.findById(user.getId()).orElse(null);
+		if (!user.isActive() || credential == null || !this.passwordEncoder.matches(password, credential.getPasswordHash())) {
+			return registerFailure(user, now, client);
+		}
+		if (!this.customerProfiles.existsForUser(user.getId())) {
+			// Persona CUSTOMER needs a CustomerProfile (Identity §2.5); answered like a wrong password (AO1, K2).
+			this.securityEvents.record(SecurityEventType.LOGIN_FAILED, user.getId(), null, null, client,
+					Map.of("reason", SecurityEventLog.NO_CUSTOMER_PROFILE));
+			return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
+		}
+		this.securityEvents.record(SecurityEventType.LOGIN_SUCCESS, user.getId(), null, client);
+		return new LoginResult.Authenticated(this.sessionIssuer.openCustomerSession(user.getId(), client, now));
 	}
 
 	/** The password was right; the login continues with {@code next} before any session exists. */
