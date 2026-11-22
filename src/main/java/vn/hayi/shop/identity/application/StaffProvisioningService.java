@@ -12,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +34,7 @@ import vn.hayi.shop.identity.domain.UserRepository;
 import vn.hayi.shop.identity.infrastructure.RoleQueries;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.shared.actor.ActorContext;
+import vn.hayi.shop.shared.error.CommonErrorCode;
 import vn.hayi.shop.shared.error.DomainException;
 import vn.hayi.shop.staff.api.StaffDirectory;
 import vn.hayi.shop.staff.api.StaffErrorCode;
@@ -131,7 +134,18 @@ public class StaffProvisioningService {
 		UUID staffId = this.staff.create(new StaffDirectory.NewStaff(userId, request.employeeCode(),
 				request.fullName(), request.contactPhone(), request.joinedOn(), request.assignments()));
 		// Flushes the new User and its identifiers too: the role grants below are plain SQL with a FK to iam_user.
-		this.identifiers.saveAndFlush(LoginIdentifier.employeeCode(userId, request.employeeCode(), now));
+		try {
+			this.identifiers.saveAndFlush(LoginIdentifier.employeeCode(userId, request.employeeCode(), now));
+		}
+		catch (DataIntegrityViolationException ex) {
+			// A concurrent create took the same new phone/email after the lookup (review of PR #105, AQ3).
+			String message = NestedExceptionUtils.getMostSpecificCause(ex).getMessage();
+			if (message != null && message.contains("uk_iam_login_identifier__type_value")) {
+				throw new DomainException(IdentityErrorCode.STAFF_IDENTIFIER_CONFLICT,
+						"The login phone or email was just taken by another user");
+			}
+			throw ex;
+		}
 		ActorContext actor = ActorContext.staff(actorUserId, null);
 		Map<String, Object> created = new LinkedHashMap<>();
 		created.put("staffId", staffId);
@@ -162,9 +176,11 @@ public class StaffProvisioningService {
 		Map<BranchRole, RoleQueries.Role> resolved = new LinkedHashMap<>();
 		for (BranchRole grant : request.branchRoles()) {
 			RoleQueries.Role role = this.roles.findRole(grant.roleCode())
-				.filter(found -> "BRANCH".equals(found.allowedScope()))
-				.orElseThrow(() -> new DomainException(IdentityErrorCode.ROLE_SCOPE_MISMATCH,
-						"Not a BRANCH role: " + grant.roleCode()));
+				.orElseThrow(() -> new DomainException(CommonErrorCode.VALIDATION_FAILED,
+						"Unknown role " + grant.roleCode()));
+			if (!"BRANCH".equals(role.allowedScope())) {
+				throw new DomainException(IdentityErrorCode.ROLE_SCOPE_MISMATCH, "Not a BRANCH role: " + grant.roleCode());
+			}
 			if (!assigned.contains(grant.branchId())) {
 				throw new DomainException(IdentityErrorCode.ROLE_REQUIRES_ASSIGNMENT,
 						"No assignment at Branch " + grant.branchId());

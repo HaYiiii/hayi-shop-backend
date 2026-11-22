@@ -38,6 +38,8 @@ tags:
     description: Image uploads straight to object storage via a pre-signed URL (File Storage §18.5, API 06 §1, Decision G8, AF)
   - name: Staff
     description: Staff provisioning and reads (API 10 §1, Identity §2.11, Decision AQ)
+  - name: Roles
+    description: System roles and their grants (API 10 §2, API 01-security §7.7, Decision AR)
 security:
   - accessCookie: []
 paths:
@@ -2066,6 +2068,104 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /roles:
+    get:
+      tags: [Roles]
+      operationId: listRoles
+      summary: The system roles and their permissions
+      description: '`STAFF_VIEW`. Read-only (Decision D3, AR1).'
+      responses:
+        '200':
+          description: The roles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /users/{userId}/roles:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Roles]
+      operationId: getUserRoles
+      summary: The roles of a user
+      description: '`STAFF_VIEW`. Unknown user → `404 USER_NOT_FOUND` (Decision AR1).'
+      responses:
+        '200':
+          description: The roles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserRoles' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{userId}/store-roles:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [Roles]
+      operationId: replaceStoreRoles
+      summary: Set the STORE roles of a user
+      description: |
+        `ROLE_ASSIGN` with a fresh step-up. Replaces the user's STORE roles; idempotent, no `If-Match` (Decision AR1).
+        Only an OWNER may add or remove OWNER/ADMIN → else `403 ROLE_ASSIGN_FORBIDDEN_ROLE`; changing your own roles →
+        `403 ROLE_SELF_ASSIGN_FORBIDDEN` (both log `PERMISSION_ESCALATION_ATTEMPT`); a BRANCH role →
+        `422 ROLE_SCOPE_MISMATCH`; an unknown role → `400`; revoking the last OWNER → `409 ROLE_LAST_OWNER`. A user left
+        without any role loses its Backoffice sessions. Audited. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoleCodesRequest' }
+      responses:
+        '200':
+          description: The roles after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserRoles' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/RoleConflict' }
+        '422': { $ref: '#/components/responses/StaffRuleViolated' }
+  /users/{userId}/branch-roles/{branchId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+      - name: branchId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Roles]
+      operationId: replaceBranchRoles
+      summary: Set the roles of a user at one Branch
+      description: |
+        `ROLE_ASSIGN` with a fresh step-up. Replaces the user's roles at that Branch; empty = revoke them all there
+        (Decision AR1). A role needs an `ACTIVE` assignment at the Branch → `422 ROLE_REQUIRES_ASSIGNMENT`; a STORE role
+        → `422 ROLE_SCOPE_MISMATCH`; self-change → `403 ROLE_SELF_ASSIGN_FORBIDDEN`; unknown Branch →
+        `404 BRANCH_NOT_FOUND`. A user left without any role loses its Backoffice sessions. Audited. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoleCodesRequest' }
+      responses:
+        '200':
+          description: The roles after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserRoles' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/StaffRuleViolated' }
   /uploads:
     post:
       tags: [Uploads]
@@ -2402,6 +2502,11 @@ components:
       schema: { type: string, format: uuid }
     ProductId:
       name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      name: userId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -2871,6 +2976,51 @@ components:
           type: array
           items: { $ref: '#/components/schemas/StaffBranchRole' }
         version: { type: integer, format: int64 }
+    RoleSummary:
+      type: object
+      required: [code, name, scope, requiresMfa, permissions]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        scope: { type: string, enum: [STORE, BRANCH] }
+        requiresMfa: { type: boolean }
+        permissions:
+          type: array
+          items: { type: string }
+    RoleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RoleSummary' }
+    BranchRoleSet:
+      type: object
+      required: [branchId, roleCodes]
+      properties:
+        branchId: { type: string, format: uuid }
+        roleCodes:
+          type: array
+          items: { type: string }
+    UserRoles:
+      type: object
+      required: [userId, storeRoles, branchRoles]
+      properties:
+        userId: { type: string, format: uuid }
+        storeRoles:
+          type: array
+          items: { type: string }
+        branchRoles:
+          type: array
+          items: { $ref: '#/components/schemas/BranchRoleSet' }
+    RoleCodesRequest:
+      type: object
+      required: [roleCodes]
+      properties:
+        roleCodes:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1, maxLength: 64 }
     UploadIntentRequest:
       type: object
       required: [purpose, fileName, contentType, sizeBytes, checksumSha256]
@@ -3696,7 +3846,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
-      description: '`CSRF_INVALID`, `PERMISSION_DENIED`, `BRANCH_SCOPE_DENIED`, `STEP_UP_REQUIRED`'
+      description: '`CSRF_INVALID`, `PERMISSION_DENIED`, `BRANCH_SCOPE_DENIED`, `STEP_UP_REQUIRED`, `ROLE_ASSIGN_FORBIDDEN_ROLE`, `ROLE_SELF_ASSIGN_FORBIDDEN`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -3704,7 +3854,7 @@ components:
       description: |
         `BRANCH_NOT_FOUND`, `BRANCH_HOURS_OVERRIDE_NOT_FOUND`, `FULFILLMENT_OVERRIDE_NOT_FOUND`,
         `CATALOG_CATEGORY_NOT_FOUND`, `CATALOG_PRODUCT_NOT_FOUND`, `CATALOG_VARIANT_NOT_FOUND`, `CATALOG_LISTING_NOT_FOUND`, `CATALOG_IMAGE_NOT_FOUND`, `UPLOAD_NOT_FOUND`,
-        `CATALOG_OPTION_GROUP_NOT_FOUND`, `CATALOG_OPTION_ITEM_NOT_FOUND`, `STAFF_NOT_FOUND`
+        `CATALOG_OPTION_GROUP_NOT_FOUND`, `CATALOG_OPTION_ITEM_NOT_FOUND`, `STAFF_NOT_FOUND`, `USER_NOT_FOUND`
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -3868,6 +4018,11 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     PreconditionRequired:
       description: '`PRECONDITION_REQUIRED` — `If-Match` is missing (API README §8)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RoleConflict:
+      description: '`ROLE_LAST_OWNER` (Decision AR3)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
