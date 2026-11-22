@@ -133,6 +133,17 @@ public class User {
 		this.updatedAt = now;
 	}
 
+	/**
+	 * The password was reset by OTP (Decision AS2): the temporary lock and the failure streak end, but this is not a
+	 * login, so {@code lastLoginAt} stays.
+	 */
+	public void clearLoginLock(Instant now) {
+		this.failedLoginCount = 0;
+		this.lockedUntil = null;
+		this.lockReason = null;
+		this.updatedAt = now;
+	}
+
 	public UUID getId() {
 		return this.id;
 	}

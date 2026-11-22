@@ -26,4 +26,7 @@ public interface UserSessionRepository extends Repository<UserSession, UUID> {
 	/** The user's sessions of one persona that are not revoked yet (offboarding, Decision AR4). */
 	List<UserSession> findByUserIdAndPersonaAndRevokedAtIsNull(UUID userId, Persona persona);
 
+	/** Every session of the user not revoked yet, both personas (password reset, Decision AS2). */
+	List<UserSession> findByUserIdAndRevokedAtIsNull(UUID userId);
+
 }

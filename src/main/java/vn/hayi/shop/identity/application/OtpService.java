@@ -12,7 +12,10 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import vn.hayi.shop.customer.api.CustomerProfiles;
+import vn.hayi.shop.identity.domain.IdentifierType;
 import vn.hayi.shop.identity.domain.IdentityErrorCode;
+import vn.hayi.shop.identity.domain.LoginIdentifierRepository;
 import vn.hayi.shop.identity.domain.PhoneNumbers;
 import vn.hayi.shop.identity.domain.VerificationChallenge;
 import vn.hayi.shop.identity.domain.VerificationChallengeRepository;
@@ -53,8 +56,15 @@ public class OtpService {
 
 	private final Clock clock;
 
+	private final LoginIdentifierRepository identifiers;
+
+	private final CustomerProfiles customerProfiles;
+
 	OtpService(VerificationChallengeRepository challenges, OtpSender sender, SecurityEventLog securityEvents,
-			Tokens tokens, IdentityProperties properties, TransactionTemplate transactions, Clock clock) {
+			Tokens tokens, IdentityProperties properties, TransactionTemplate transactions, Clock clock,
+			LoginIdentifierRepository identifiers, CustomerProfiles customerProfiles) {
+		this.identifiers = identifiers;
+		this.customerProfiles = customerProfiles;
 		this.challenges = challenges;
 		this.sender = sender;
 		this.securityEvents = securityEvents;
@@ -101,7 +111,9 @@ public class OtpService {
 			this.securityEvents.record(SecurityEventType.OTP_REQUESTED, null, null, null, client,
 					metadata(purpose, phone));
 		});
-		this.sender.send(phone, code, purpose);
+		if (shouldSend(phone, purpose)) {
+			this.sender.send(phone, code, purpose);
+		}
 		return new Sent(id, now.plus(this.settings.ttl()), this.settings.resendInterval().toSeconds());
 	}
 
@@ -148,6 +160,19 @@ public class OtpService {
 		this.securityEvents.record(SecurityEventType.OTP_VERIFIED, null, null, null, client, metadata);
 		Instant expiresAt = now.plus(TOKEN_TTL);
 		return new Outcome.Ok(new Verified(this.tokens.issueVerificationToken(challengeId, expiresAt), expiresAt));
+	}
+
+	/**
+	 * A recovery code goes out only to a phone of a User with a CustomerProfile; any other phone gets the same answer
+	 * and challenge but no SMS (Decision AS1).
+	 */
+	private boolean shouldSend(String phone, VerificationPurpose purpose) {
+		if (purpose != VerificationPurpose.PASSWORD_RECOVERY) {
+			return true;
+		}
+		return this.identifiers.findByTypeAndNormalizedValue(IdentifierType.PHONE, phone)
+			.map(identifier -> this.customerProfiles.existsForUser(identifier.getUserId()))
+			.orElse(false);
 	}
 
 	private void throttle(String phone, VerificationPurpose purpose, ClientInfo client, Instant now) {
