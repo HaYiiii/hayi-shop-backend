@@ -7,6 +7,7 @@ package vn.hayi.shop.identity.domain;
 public enum VerificationPurpose {
 
 	MFA_LOGIN,
-	REGISTRATION
+	REGISTRATION,
+	PASSWORD_RECOVERY
 
 }

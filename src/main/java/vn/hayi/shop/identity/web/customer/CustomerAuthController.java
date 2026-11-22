@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import vn.hayi.shop.identity.application.CustomerAccountService;
+import vn.hayi.shop.identity.application.CustomerPasswordService;
 import vn.hayi.shop.identity.application.CustomerRegistrationService;
 import vn.hayi.shop.identity.application.LoginResult;
 import vn.hayi.shop.identity.application.LoginService;
@@ -33,6 +34,8 @@ import vn.hayi.shop.platform.web.spec.customer.model.CustomerLoginRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.CustomerLoginResponseDto;
 import vn.hayi.shop.platform.web.spec.customer.model.CustomerMeDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpRequestDto;
+import vn.hayi.shop.platform.web.spec.customer.model.PasswordChangeRequestDto;
+import vn.hayi.shop.platform.web.spec.customer.model.PasswordResetRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpSentDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpVerifiedDto;
 import vn.hayi.shop.platform.web.spec.customer.model.OtpVerifyRequestDto;
@@ -69,9 +72,12 @@ class CustomerAuthController implements CustomerAuthApi {
 
 	private final AuthRateLimiter rateLimits;
 
+	private final CustomerPasswordService passwords;
+
 	CustomerAuthController(OtpService otps, CustomerRegistrationService registrations, ClientIpResolver ips,
 			HttpServletRequest request, LoginService login, SessionService sessions, CustomerAccountService accounts,
-			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits) {
+			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits, CustomerPasswordService passwords) {
+		this.passwords = passwords;
 		this.otps = otps;
 		this.registrations = registrations;
 		this.ips = ips;
@@ -148,6 +154,22 @@ class CustomerAuthController implements CustomerAuthApi {
 	/** Set by the CSRF filter once the double-submit token checked out. */
 	private UUID csrfSession() {
 		return (UUID) this.request.getAttribute(CsrfTokens.VERIFIED_SESSION_ATTRIBUTE);
+	}
+
+	// --- password (Decision AS) --------------------------------------------------------------------------------
+
+	@Override
+	public ResponseEntity<Void> resetPassword(PasswordResetRequestDto body) {
+		this.passwords.reset(body.getVerificationToken(), body.getNewPassword(), client());
+		return ResponseEntity.noContent().build();
+	}
+
+	@Override
+	public ResponseEntity<Void> changePassword(PasswordChangeRequestDto body, String xCsrfToken) {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		this.passwords.change(session.userId(), session.sessionId(), body.getCurrentPassword(), body.getNewPassword(),
+				client());
+		return ResponseEntity.noContent().build();
 	}
 
 	// --- registration (Decision AN) ----------------------------------------------------------------------------

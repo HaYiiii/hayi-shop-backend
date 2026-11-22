@@ -195,7 +195,8 @@ public class LoginService {
 		this.securityEvents.record(SecurityEventType.LOGIN_SUCCESS, user.getId(), null, null, client, Map.of("next", next));
 	}
 
-	private LoginResult registerFailure(User user, Instant now, ClientInfo client) {
+	/** A wrong password of {@code user}: counted toward the K2 lock; also used by password change (AS3). */
+	LoginResult registerFailure(User user, Instant now, ClientInfo client) {
 		LoginLockPolicy policy = this.properties.login().lockPolicy();
 		int earlierFailures = this.securityEvents.countLoginFailures(user.getId(), user.failureWindowStart(now, policy));
 		boolean locked = user.registerFailedLogin(now, earlierFailures, policy);

@@ -148,6 +148,12 @@ public class RoleAssignmentService {
 			Set<String> locked = currentAt(userId, branchId);
 			Set<String> added = minus(wanted.keySet(), locked);
 			Set<String> removed = minus(locked, wanted.keySet());
+			// The roles may have changed since the checks above (review of PR #107): check the locked diff again.
+			guard(userId, callerId, added, removed, client, branchId);
+			if (!added.isEmpty() && !this.assignments.activeBranchIds(userId).contains(branchId)) {
+				throw new DomainException(IdentityErrorCode.ROLE_REQUIRES_ASSIGNMENT,
+						"No ACTIVE assignment at Branch " + branchId);
+			}
 			for (String code : removed) {
 				this.roles.revokeBranchRole(userId, branchId, this.roles.findRole(code).orElseThrow().id());
 				record(callerId, client, "ROLE_REVOKE", userId,
