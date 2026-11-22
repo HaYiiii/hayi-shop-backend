@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.core.Ordered;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -26,6 +28,15 @@ class PublicRateLimitConfig implements WebMvcConfigurer {
 	@Bean
 	ClientIpResolver clientIpResolver(PublicRateLimitProperties properties) {
 		return new ClientIpResolver(properties.trustedProxies());
+	}
+
+	/** Runs ahead of Spring Security so the CSRF filter's events see the resolved IP too (Decision AU3). */
+	@Bean
+	FilterRegistrationBean<ClientIpFilter> clientIpFilter(ClientIpResolver clientIpResolver) {
+		FilterRegistrationBean<ClientIpFilter> registration = new FilterRegistrationBean<>(
+				new ClientIpFilter(clientIpResolver));
+		registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
+		return registration;
 	}
 
 	@Override
