@@ -9,4 +9,7 @@ public interface StaffProfiles {
 	/** The StaffProfile's full name, whatever its status; empty for a user without StaffProfile. */
 	Optional<String> fullName(UUID userId);
 
+	/** Whether the user has an {@code ACTIVE} StaffProfile: what persona STAFF needs without a STORE role (§2.5). */
+	boolean isActiveStaff(UUID userId);
+
 }

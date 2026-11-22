@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import vn.hayi.shop.identity.application.IdentityProperties.Mfa;
 import vn.hayi.shop.customer.api.CustomerProfiles;
+import vn.hayi.shop.staff.api.StaffProfiles;
 import vn.hayi.shop.identity.domain.IdentifierType;
 import vn.hayi.shop.identity.domain.PhoneNumbers;
 import vn.hayi.shop.identity.domain.IdentityErrorCode;
@@ -75,14 +76,18 @@ public class LoginService {
 
 	private final CustomerProfiles customerProfiles;
 
+	private final StaffProfiles staffProfiles;
+
 	/** Compared against when the user does not exist, so both failures take the same time. */
 	private final String unknownUserHash;
 
 	LoginService(LoginIdentifierRepository identifiers, UserRepository users, UserCredentialRepository credentials,
 			VerificationChallengeRepository challenges, MfaCodes mfaCodes, RoleQueries roles, SessionIssuer sessionIssuer,
 			Tokens tokens, PasswordEncoder passwordEncoder, SecurityEventLog securityEvents, IdentityProperties properties,
-			SecurityProperties securityProperties, Clock clock, CustomerProfiles customerProfiles) {
+			SecurityProperties securityProperties, Clock clock, CustomerProfiles customerProfiles,
+			StaffProfiles staffProfiles) {
 		this.customerProfiles = customerProfiles;
+		this.staffProfiles = staffProfiles;
 		this.identifiers = identifiers;
 		this.users = users;
 		this.credentials = credentials;
@@ -120,8 +125,8 @@ public class LoginService {
 		if (!user.isActive() || credential == null || !this.passwordEncoder.matches(password, credential.getPasswordHash())) {
 			return registerFailure(user, now, client);
 		}
-		if (!this.roles.hasAnyStoreRole(user.getId())) {
-			// Persona STAFF needs a STORE role or an active StaffProfile (Identity §2.5); staff profiles come later.
+		if (!this.roles.hasAnyStoreRole(user.getId()) && !this.staffProfiles.isActiveStaff(user.getId())) {
+			// Persona STAFF needs a STORE role or an ACTIVE StaffProfile (Identity §2.5).
 			// Answered like a wrong password so this endpoint never confirms another persona's password (Decision K2).
 			this.securityEvents.record(SecurityEventType.LOGIN_FAILED, user.getId(), null, null, client,
 					Map.of("reason", SecurityEventLog.NO_BACKOFFICE_ACCESS));
@@ -202,14 +207,23 @@ public class LoginService {
 		return new LoginResult.Rejected(IdentityErrorCode.AUTH_INVALID_CREDENTIALS);
 	}
 
-	/** Backoffice v1 logs in by email; employee code and phone arrive with staff provisioning. */
+	/**
+	 * The Backoffice identifier is an email, a phone or an employee code (Identity §2.2, API 01-security §6.2): an
+	 * {@code @} means email, a Vietnamese phone number means phone, anything else is an employee code.
+	 */
 	private Optional<User> findUser(String identifier) {
-		if (!identifier.contains("@")) {
-			return Optional.empty();
+		Optional<LoginIdentifier> found;
+		if (identifier.contains("@")) {
+			found = this.identifiers.findByTypeAndNormalizedValue(IdentifierType.EMAIL,
+					LoginIdentifier.normalizeEmail(identifier));
 		}
-		return this.identifiers
-			.findByTypeAndNormalizedValue(IdentifierType.EMAIL, LoginIdentifier.normalizeEmail(identifier))
-			.flatMap(found -> this.users.findByIdForUpdate(found.getUserId()));
+		else {
+			found = PhoneNumbers.normalize(identifier)
+				.flatMap(phone -> this.identifiers.findByTypeAndNormalizedValue(IdentifierType.PHONE, phone))
+				.or(() -> this.identifiers.findByTypeAndNormalizedValue(IdentifierType.EMPLOYEE_CODE,
+						identifier.strip().toUpperCase(java.util.Locale.ROOT)));
+		}
+		return found.flatMap(identifierFound -> this.users.findByIdForUpdate(identifierFound.getUserId()));
 	}
 
 	/** {@code ow***@hayi.vn}: enough to correlate attempts, not enough to leak the identifier. */

@@ -68,6 +68,22 @@ public class LoginIdentifier {
 		return identifier;
 	}
 
+	/**
+	 * The employee code Staff Operations owns, mirrored for login (Identity §2.2); Identity never changes its value.
+	 * @param employeeCode as Staff Operations stores it (upper-case)
+	 */
+	public static LoginIdentifier employeeCode(UUID userId, String employeeCode, Instant now) {
+		LoginIdentifier identifier = new LoginIdentifier();
+		identifier.id = UuidV7.generate();
+		identifier.userId = userId;
+		identifier.type = IdentifierType.EMPLOYEE_CODE;
+		identifier.normalizedValue = employeeCode;
+		identifier.verifiedAt = now;
+		identifier.createdAt = now;
+		identifier.updatedAt = now;
+		return identifier;
+	}
+
 	/** The holder proved it (an OTP answered on registration); a verified identifier stays as it was. */
 	public void markVerified(Instant now) {
 		if (this.verifiedAt == null) {
