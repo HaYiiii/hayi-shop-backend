@@ -28,6 +28,11 @@ class JdbcStaffProfiles implements StaffProfiles {
 	}
 
 	@Override
+	public boolean exists(UUID userId) {
+		return fullName(userId).isPresent();
+	}
+
+	@Override
 	public boolean isActiveStaff(UUID userId) {
 		return this.jdbc.sql("SELECT COUNT(*) FROM stf_staff_profile WHERE user_id = ? AND status = 'ACTIVE'")
 			.param(toBytes(userId))

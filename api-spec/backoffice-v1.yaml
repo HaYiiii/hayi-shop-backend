@@ -261,6 +261,44 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BackofficeMe' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/sessions:
+    get:
+      tags: [Auth]
+      operationId: listSessions
+      summary: The devices signed in on this surface
+      description: |
+        The caller's own live sessions of this surface's persona, most recently used first; `current` marks this one
+        (Decision AT1).
+      responses:
+        '200':
+          description: The sessions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceSessionList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/sessions/{sessionId}:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Auth]
+      operationId: revokeSession
+      summary: Sign out another device
+      description: |
+        Ends another of the caller's sessions now; its next request gets `401` (Decision AT2). Another user's or
+        persona's session, an unknown or ended one → `404 SESSION_NOT_FOUND`; this session → `409 SESSION_IS_CURRENT`
+        (use `/auth/logout`). Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session revoked.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/SessionNotFound' }
+        '409': { $ref: '#/components/responses/SessionIsCurrent' }
   /branches:
     get:
       tags: [Branches]
@@ -3021,6 +3059,23 @@ components:
           type: array
           maxItems: 10
           items: { type: string, minLength: 1, maxLength: 64 }
+    DeviceSession:
+      type: object
+      required: [sessionId, userAgent, ipAddress, createdAt, lastActiveAt, current]
+      properties:
+        sessionId: { type: string, format: uuid }
+        userAgent: { type: [string, 'null'] }
+        ipAddress: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time }
+        current: { type: boolean }
+    DeviceSessionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceSession' }
     UploadIntentRequest:
       type: object
       required: [purpose, fileName, contentType, sizeBytes, checksumSha256]
@@ -4023,6 +4078,16 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     RoleConflict:
       description: '`ROLE_LAST_OWNER` (Decision AR3)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    SessionNotFound:
+      description: '`SESSION_NOT_FOUND` (Decision AT2)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    SessionIsCurrent:
+      description: '`SESSION_IS_CURRENT` (Decision AT2)'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -23,7 +23,9 @@ public enum IdentityErrorCode implements ErrorCode {
 	ROLE_ASSIGN_FORBIDDEN_ROLE(ErrorKind.FORBIDDEN),
 	ROLE_SELF_ASSIGN_FORBIDDEN(ErrorKind.FORBIDDEN),
 	ROLE_LAST_OWNER(ErrorKind.CONFLICT),
-	USER_NOT_FOUND(ErrorKind.NOT_FOUND);
+	USER_NOT_FOUND(ErrorKind.NOT_FOUND),
+	SESSION_NOT_FOUND(ErrorKind.NOT_FOUND),
+	SESSION_IS_CURRENT(ErrorKind.CONFLICT);
 
 	private final ErrorKind kind;
 

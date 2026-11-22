@@ -24,6 +24,9 @@ import vn.hayi.shop.identity.application.OtpService;
 import vn.hayi.shop.platform.security.AuthCookies;
 import vn.hayi.shop.platform.security.AuthRateLimiter;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
+import vn.hayi.shop.platform.web.spec.customer.model.DeviceSessionDto;
+import vn.hayi.shop.platform.web.spec.customer.model.DeviceSessionListDto;
+import vn.hayi.shop.identity.application.DeviceSessionService;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.CsrfTokens;
 import vn.hayi.shop.platform.security.Surface;
@@ -74,10 +77,14 @@ class CustomerAuthController implements CustomerAuthApi {
 
 	private final CustomerPasswordService passwords;
 
+	private final DeviceSessionService devices;
+
 	CustomerAuthController(OtpService otps, CustomerRegistrationService registrations, ClientIpResolver ips,
 			HttpServletRequest request, LoginService login, SessionService sessions, CustomerAccountService accounts,
-			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits, CustomerPasswordService passwords) {
+			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits, CustomerPasswordService passwords,
+			DeviceSessionService devices) {
 		this.passwords = passwords;
+		this.devices = devices;
 		this.otps = otps;
 		this.registrations = registrations;
 		this.ips = ips;
@@ -154,6 +161,25 @@ class CustomerAuthController implements CustomerAuthApi {
 	/** Set by the CSRF filter once the double-submit token checked out. */
 	private UUID csrfSession() {
 		return (UUID) this.request.getAttribute(CsrfTokens.VERIFIED_SESSION_ATTRIBUTE);
+	}
+
+	@Override
+	public ResponseEntity<DeviceSessionListDto> listCustomerSessions() {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		return ResponseEntity.ok(new DeviceSessionListDto(this.devices
+			.list(session.userId(), session.persona(), session.sessionId())
+			.stream()
+			.map(device -> new DeviceSessionDto(device.sessionId(), device.userAgent(), device.ipAddress(),
+					device.createdAt().atOffset(java.time.ZoneOffset.UTC),
+					device.lastActiveAt().atOffset(java.time.ZoneOffset.UTC), device.current()))
+			.toList()));
+	}
+
+	@Override
+	public ResponseEntity<Void> revokeCustomerSession(UUID sessionId, String xCsrfToken) {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		this.devices.revoke(session.userId(), session.persona(), session.sessionId(), sessionId, client());
+		return ResponseEntity.noContent().build();
 	}
 
 	// --- password (Decision AS) --------------------------------------------------------------------------------
