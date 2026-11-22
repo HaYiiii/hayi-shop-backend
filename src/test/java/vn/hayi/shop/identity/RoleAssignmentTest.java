@@ -190,6 +190,38 @@ class RoleAssignmentTest {
 		assertProblem(putStoreRoles(stale, target, "ADMIN"), 403, "STEP_UP_REQUIRED");
 	}
 
+	// --- review of PR #106 ------------------------------------------------------------------------------------
+
+	@Test
+	void theSamePutSentTwiceAtOnceGrantsOnce() throws Exception {
+		UUID target = this.fixtures.withoutBackofficeAccess(IdentityFixtures.uniqueEmail());
+
+		var first = java.util.concurrent.CompletableFuture.supplyAsync(() -> statusOf(target));
+		var second = java.util.concurrent.CompletableFuture.supplyAsync(() -> statusOf(target));
+
+		assertThat(List.of(first.get(), second.get())).containsExactly(200, 200);
+		assertThat(audits("ROLE_GRANT", target)).isEqualTo(1);
+	}
+
+	@Test
+	void unknownUsersAndBranchesAreNotFoundOnThePuts() throws Exception {
+		UUID staff = this.fixtures.branchStaff();
+
+		assertProblem(putStoreRoles(this.owner, UUID.randomUUID(), "ADMIN"), 404, "USER_NOT_FOUND");
+		assertProblem(putBranchRoles(this.owner, UUID.randomUUID(), this.branch, "STAFF"), 404, "USER_NOT_FOUND");
+		assertProblem(putBranchRoles(this.owner, staff, UUID.randomUUID().toString(), "STAFF"), 404,
+				"BRANCH_NOT_FOUND");
+	}
+
+	private int statusOf(UUID target) {
+		try {
+			return putStoreRoles(this.owner, target, "ADMIN").getStatus();
+		}
+		catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
+
 	// --- helpers ------------------------------------------------------------------------------------------------
 
 	private MockHttpServletResponse putStoreRoles(Session session, UUID userId, String... roles) throws Exception {

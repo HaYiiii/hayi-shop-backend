@@ -6,7 +6,8 @@ import vn.hayi.shop.shared.error.ErrorKind;
 /** Error codes of the Customer context (API README §6, Decision AN4). */
 public enum CustomerErrorCode implements ErrorCode {
 
-	CUSTOMER_ALREADY_REGISTERED(ErrorKind.CONFLICT);
+	CUSTOMER_ALREADY_REGISTERED(ErrorKind.CONFLICT),
+	CUSTOMER_PROFILE_NOT_FOUND(ErrorKind.NOT_FOUND);
 
 	private final ErrorKind kind;
 

@@ -14,6 +14,7 @@ import vn.hayi.shop.customer.api.CustomerProfiles;
 import vn.hayi.shop.customer.api.CustomerErrorCode;
 import vn.hayi.shop.customer.domain.CustomerProfile;
 import vn.hayi.shop.customer.domain.CustomerProfileRepository;
+import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.error.DomainException;
 
 /** {@link CustomerProfiles}: runs inside the caller's registration transaction (Identity §2.11). */
@@ -41,7 +42,24 @@ class CustomerProfileService implements CustomerProfiles {
 	@Transactional(readOnly = true)
 	public Optional<Summary> findByUser(UUID userId) {
 		return this.profiles.findByUserId(userId)
-			.map(profile -> new Summary(profile.getId(), profile.getDisplayName()));
+			.map(CustomerProfileService::summary);
+	}
+
+	@Override
+	@Transactional
+	public Summary rename(UUID userId, String displayName, long expectedVersion) {
+		CustomerProfile profile = this.profiles.findByUserId(userId)
+			.orElseThrow(() -> new DomainException(CustomerErrorCode.CUSTOMER_PROFILE_NOT_FOUND,
+					"No Customer profile for user " + userId));
+		new ExpectedVersion(expectedVersion).verify(profile.getVersion());
+		if (profile.rename(displayName, this.clock.instant())) {
+			this.profiles.saveAndFlush(profile);
+		}
+		return summary(profile);
+	}
+
+	private static Summary summary(CustomerProfile profile) {
+		return new Summary(profile.getId(), profile.getDisplayName(), profile.getVersion());
 	}
 
 	@Override

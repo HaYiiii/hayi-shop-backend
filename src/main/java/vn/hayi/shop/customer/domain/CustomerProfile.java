@@ -50,6 +50,20 @@ public class CustomerProfile {
 		return profile;
 	}
 
+	/** Returns whether the name changed; only then does the version move. */
+	public boolean rename(String displayName, Instant now) {
+		if (this.displayName.equals(displayName)) {
+			return false;
+		}
+		this.displayName = displayName;
+		this.updatedAt = now;
+		return true;
+	}
+
+	public long getVersion() {
+		return this.version;
+	}
+
 	public UUID getId() {
 		return this.id;
 	}
