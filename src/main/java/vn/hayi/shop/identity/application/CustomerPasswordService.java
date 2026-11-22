@@ -162,7 +162,7 @@ public class CustomerPasswordService {
 
 	/** A User who is also Staff keeps the internal policy; a Customer only gets the Customer one (AS4). */
 	private void checkPolicy(UUID userId, String newPassword) {
-		boolean staff = this.staffProfiles.fullName(userId).isPresent() || this.roles.hasAnyStoreRole(userId)
+		boolean staff = this.staffProfiles.exists(userId) || this.roles.hasAnyStoreRole(userId)
 				|| !this.roles.branchRoles(userId).isEmpty();
 		if (staff) {
 			PasswordPolicy.check(newPassword);

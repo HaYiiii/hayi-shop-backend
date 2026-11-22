@@ -12,4 +12,7 @@ public interface StaffProfiles {
 	/** Whether the user has an {@code ACTIVE} StaffProfile: what persona STAFF needs without a STORE role (§2.5). */
 	boolean isActiveStaff(UUID userId);
 
+	/** Whether the user has a StaffProfile, whatever its status (password policy, Decision AS4). */
+	boolean exists(UUID userId);
+
 }

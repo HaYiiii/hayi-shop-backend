@@ -31,6 +31,9 @@ import vn.hayi.shop.identity.application.StepUpResult;
 import vn.hayi.shop.identity.application.StepUpService;
 import vn.hayi.shop.platform.security.AuthCookies;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
+import vn.hayi.shop.identity.application.DeviceSessionService;
+import vn.hayi.shop.platform.web.spec.backoffice.model.DeviceSessionDto;
+import vn.hayi.shop.platform.web.spec.backoffice.model.DeviceSessionListDto;
 import vn.hayi.shop.platform.security.CsrfTokens;
 import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.Surface;
@@ -84,7 +87,9 @@ class BackofficeAuthController implements AuthApi {
 
 	private final ClientIpResolver ips;
 
-	BackofficeAuthController(AuthRateLimiter rateLimits, ClientIpResolver ips, LoginService login, FirstPasswordChangeService firstPasswordChange,
+	private final DeviceSessionService devices;
+
+	BackofficeAuthController(DeviceSessionService devices, AuthRateLimiter rateLimits, ClientIpResolver ips, LoginService login, FirstPasswordChangeService firstPasswordChange,
 			MfaVerificationService mfaVerification, MfaEnrollmentService mfaEnrollment, StepUpService stepUp,
 			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, AccessService access,
 			BackofficeAccountService accounts, HttpServletRequest request) {
@@ -100,6 +105,7 @@ class BackofficeAuthController implements AuthApi {
 		this.accounts = accounts;
 		this.request = request;
 		this.rateLimits = rateLimits;
+		this.devices = devices;
 		this.ips = ips;
 	}
 
@@ -226,6 +232,25 @@ class BackofficeAuthController implements AuthApi {
 	/** Set by the CSRF filter once the double-submit token checked out. */
 	private UUID csrfSession() {
 		return (UUID) this.request.getAttribute(CsrfTokens.VERIFIED_SESSION_ATTRIBUTE);
+	}
+
+	@Override
+	public ResponseEntity<DeviceSessionListDto> listSessions() {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		return ResponseEntity.ok(new DeviceSessionListDto(this.devices
+			.list(session.userId(), session.persona(), session.sessionId())
+			.stream()
+			.map(device -> new DeviceSessionDto(device.sessionId(), device.userAgent(), device.ipAddress(),
+					device.createdAt().atOffset(java.time.ZoneOffset.UTC),
+					device.lastActiveAt().atOffset(java.time.ZoneOffset.UTC), device.current()))
+			.toList()));
+	}
+
+	@Override
+	public ResponseEntity<Void> revokeSession(UUID sessionId, String xCsrfToken) {
+		AuthenticatedSession session = AuthenticatedSession.require();
+		this.devices.revoke(session.userId(), session.persona(), session.sessionId(), sessionId, client());
+		return ResponseEntity.noContent().build();
 	}
 
 	private ClientInfo client() {

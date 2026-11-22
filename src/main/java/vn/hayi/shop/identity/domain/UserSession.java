@@ -106,6 +106,22 @@ public class UserSession {
 		return this.userId;
 	}
 
+	public String getUserAgent() {
+		return this.userAgent;
+	}
+
+	public String getIpAddress() {
+		return this.ipAddress;
+	}
+
+	public Instant getCreatedAt() {
+		return this.createdAt;
+	}
+
+	public Instant getLastActiveAt() {
+		return this.lastActiveAt;
+	}
+
 	public Persona getPersona() {
 		return this.persona;
 	}
