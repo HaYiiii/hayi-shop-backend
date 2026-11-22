@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpServletRequest;
  */
 public record ClientInfo(String ipAddress, String userAgent) {
 
+	/** Request attribute holding the IP resolved through the trusted proxies, set by {@link ClientIpFilter}. */
+	static final String IP_ATTRIBUTE = ClientInfo.class.getName() + ".ip";
+
 	private static final ClientInfo NONE = new ClientInfo(null, null);
 
 	public ClientInfo {
@@ -15,8 +18,14 @@ public record ClientInfo(String ipAddress, String userAgent) {
 		userAgent = truncate(userAgent, 512);
 	}
 
+	/**
+	 * The caller of this request: the IP resolved through the trusted proxies (Decision AU3), or the peer address
+	 * when the request did not pass {@link ClientIpFilter}.
+	 */
 	public static ClientInfo from(HttpServletRequest request) {
-		return new ClientInfo(request.getRemoteAddr(), request.getHeader("User-Agent"));
+		Object resolved = request.getAttribute(IP_ATTRIBUTE);
+		String ip = (resolved instanceof String value) ? value : request.getRemoteAddr();
+		return new ClientInfo(ip, request.getHeader("User-Agent"));
 	}
 
 	public static ClientInfo none() {

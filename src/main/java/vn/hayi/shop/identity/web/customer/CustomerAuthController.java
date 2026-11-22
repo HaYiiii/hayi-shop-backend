@@ -30,7 +30,6 @@ import vn.hayi.shop.identity.application.DeviceSessionService;
 import vn.hayi.shop.platform.security.ClientInfo;
 import vn.hayi.shop.platform.security.CsrfTokens;
 import vn.hayi.shop.platform.security.Surface;
-import vn.hayi.shop.platform.security.ClientIpResolver;
 import vn.hayi.shop.platform.web.InvalidFieldsException;
 import vn.hayi.shop.platform.web.spec.customer.api.CustomerAuthApi;
 import vn.hayi.shop.platform.web.spec.customer.model.CustomerLoginRequestDto;
@@ -59,8 +58,6 @@ class CustomerAuthController implements CustomerAuthApi {
 
 	private final CustomerRegistrationService registrations;
 
-	private final ClientIpResolver ips;
-
 	private final HttpServletRequest request;
 
 	private final LoginService login;
@@ -79,7 +76,7 @@ class CustomerAuthController implements CustomerAuthApi {
 
 	private final DeviceSessionService devices;
 
-	CustomerAuthController(OtpService otps, CustomerRegistrationService registrations, ClientIpResolver ips,
+	CustomerAuthController(OtpService otps, CustomerRegistrationService registrations,
 			HttpServletRequest request, LoginService login, SessionService sessions, CustomerAccountService accounts,
 			AuthCookies cookies, CsrfTokens csrfTokens, AuthRateLimiter rateLimits, CustomerPasswordService passwords,
 			DeviceSessionService devices) {
@@ -87,7 +84,6 @@ class CustomerAuthController implements CustomerAuthApi {
 		this.devices = devices;
 		this.otps = otps;
 		this.registrations = registrations;
-		this.ips = ips;
 		this.request = request;
 		this.login = login;
 		this.sessions = sessions;
@@ -228,7 +224,7 @@ class CustomerAuthController implements CustomerAuthApi {
 	}
 
 	private ClientInfo client() {
-		return new ClientInfo(this.ips.resolve(this.request), this.request.getHeader("User-Agent"));
+		return ClientInfo.from(this.request);
 	}
 
 }

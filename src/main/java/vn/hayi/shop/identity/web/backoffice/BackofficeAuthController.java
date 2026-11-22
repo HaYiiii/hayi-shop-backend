@@ -39,7 +39,6 @@ import vn.hayi.shop.platform.security.Permission;
 import vn.hayi.shop.platform.security.Surface;
 import vn.hayi.shop.platform.security.AuthRateLimiter;
 import vn.hayi.shop.platform.security.ClientInfo;
-import vn.hayi.shop.platform.security.ClientIpResolver;
 import vn.hayi.shop.platform.web.spec.backoffice.api.AuthApi;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BackofficeMeDto;
 import vn.hayi.shop.platform.web.spec.backoffice.model.BranchAccessDto;
@@ -85,11 +84,9 @@ class BackofficeAuthController implements AuthApi {
 
 	private final AuthRateLimiter rateLimits;
 
-	private final ClientIpResolver ips;
-
 	private final DeviceSessionService devices;
 
-	BackofficeAuthController(DeviceSessionService devices, AuthRateLimiter rateLimits, ClientIpResolver ips, LoginService login, FirstPasswordChangeService firstPasswordChange,
+	BackofficeAuthController(DeviceSessionService devices, AuthRateLimiter rateLimits, LoginService login, FirstPasswordChangeService firstPasswordChange,
 			MfaVerificationService mfaVerification, MfaEnrollmentService mfaEnrollment, StepUpService stepUp,
 			SessionService sessions, AuthCookies cookies, CsrfTokens csrfTokens, AccessService access,
 			BackofficeAccountService accounts, HttpServletRequest request) {
@@ -106,12 +103,11 @@ class BackofficeAuthController implements AuthApi {
 		this.request = request;
 		this.rateLimits = rateLimits;
 		this.devices = devices;
-		this.ips = ips;
 	}
 
 	@Override
 	public ResponseEntity<LoginResponseDto> login(LoginRequestDto body) {
-		this.rateLimits.checkLogin(Surface.BACKOFFICE, limitedClient());
+		this.rateLimits.checkLogin(Surface.BACKOFFICE, client());
 		return switch (this.login.loginBackoffice(body.getIdentifier(), body.getPassword(), client())) {
 			case LoginResult.Authenticated authenticated -> ResponseEntity.ok()
 				.headers(setCookies(sessionCookies(authenticated.tokens())))
@@ -173,7 +169,7 @@ class BackofficeAuthController implements AuthApi {
 
 	@Override
 	public ResponseEntity<Void> refresh(String refreshToken, String csrfHeader) {
-		this.rateLimits.checkRefresh(Surface.BACKOFFICE, csrfSession(), limitedClient());
+		this.rateLimits.checkRefresh(Surface.BACKOFFICE, csrfSession(), client());
 		return switch (this.sessions.refresh(Surface.BACKOFFICE, refreshToken, csrfSession(), client())) {
 			case RefreshResult.Rotated rotated ->
 				ResponseEntity.noContent().headers(setCookies(sessionCookies(rotated.tokens()))).build();
@@ -253,13 +249,9 @@ class BackofficeAuthController implements AuthApi {
 		return ResponseEntity.noContent().build();
 	}
 
+	/** The client behind the trusted proxies (Decision AU3), for records and the per-IP limits alike. */
 	private ClientInfo client() {
 		return ClientInfo.from(this.request);
-	}
-
-	/** The client behind the trusted proxies, for the per-IP limits (W9, AO4). */
-	private ClientInfo limitedClient() {
-		return new ClientInfo(this.ips.resolve(this.request), this.request.getHeader("User-Agent"));
 	}
 
 	/** {@code 429} with {@code Retry-After}; the message names the minutes left, rounded up. */
