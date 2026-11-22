@@ -11,6 +11,8 @@ servers:
 tags:
   - name: CustomerAuth
     description: Customer registration by phone OTP (API 01-security §6.1, Identity §2.11, Decision AN)
+  - name: CustomerProfile
+    description: The signed-in Customer's own profile (API 07 §1, Customer §3.2)
 security:
   - accessCookie: []
 paths:
@@ -181,6 +183,54 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CustomerMe' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/profile:
+    get:
+      tags: [CustomerProfile]
+      operationId: getMyProfile
+      summary: The signed-in Customer's profile
+      description: |
+        `phoneMasked` comes from the login phone (Identity §2.2); `loyalty` is `null` until Loyalty (S16) but the key is
+        always there (API 07 §1). `ETag` is the profile version, for `If-Match` on `PATCH`.
+      responses:
+        '200':
+          description: The profile.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [CustomerProfile]
+      operationId: updateMyProfile
+      summary: Rename the signed-in Customer
+      description: |
+        JSON Merge Patch on `displayName` (1–128, not blank, not `null`); any other key → `400`. Requires `If-Match`
+        (missing → `428`, stale → `412`); the same name keeps the version (Decision O). Requires `X-CSRF-Token`.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          schema: { type: string, maxLength: 64 }
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/CustomerProfilePatch' }
+      responses:
+        '200':
+          description: The profile after the edit.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerProfile' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
 components:
   securitySchemes:
     accessCookie:
@@ -205,6 +255,9 @@ components:
       description: Value of the `hy_c_csrf` cookie (the Customer one, Decision AP1); missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
   headers:
+    ETag:
+      description: '`"v{version}"` of the resource (API README §8).'
+      schema: { type: string }
     SetCookie:
       description: Auth cookies (API 01-security §3).
       schema: { type: string }
@@ -221,6 +274,16 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
       description: '`CSRF_INVALID`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    VersionConflict:
+      description: '`VERSION_CONFLICT`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PreconditionRequired:
+      description: '`PRECONDITION_REQUIRED`'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -308,3 +371,27 @@ components:
         customerId: { type: [string, 'null'], format: uuid }
         displayName: { type: [string, 'null'] }
         phoneMasked: { type: [string, 'null'], description: 'e.g. `+8490*****567`' }
+    Loyalty:
+      type: object
+      required: [tier, availablePoints]
+      properties:
+        tier: { type: string }
+        availablePoints: { type: integer, format: int64 }
+    CustomerProfile:
+      type: object
+      required: [customerId, displayName, phoneMasked, loyalty]
+      properties:
+        customerId: { type: string, format: uuid }
+        displayName: { type: string }
+        phoneMasked: { type: [string, 'null'] }
+        loyalty:
+          description: '`null` until Loyalty (S16).'
+          oneOf:
+            - $ref: '#/components/schemas/Loyalty'
+            - type: 'null'
+    CustomerProfilePatch:
+      type: object
+      additionalProperties: false
+      description: JSON Merge Patch of the profile; `displayName` cannot be `null` or blank.
+      properties:
+        displayName: { type: string, maxLength: 128 }

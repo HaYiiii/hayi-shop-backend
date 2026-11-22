@@ -102,11 +102,15 @@ public class RoleAssignmentService {
 		requireUser(userId);
 		Map<String, RoleQueries.Role> wanted = resolve(roleCodes, "STORE");
 		Set<String> current = new TreeSet<>(this.roles.storeRoleCodes(userId));
-		Set<String> added = minus(wanted.keySet(), current);
-		Set<String> removed = minus(current, wanted.keySet());
-		guard(userId, callerId, added, removed, client, null);
+		guard(userId, callerId, minus(wanted.keySet(), current), minus(current, wanted.keySet()), client, null);
 		this.transactions.executeWithoutResult(status -> {
 			Instant now = this.clock.instant();
+			// Serialises role changes of one user, then diffs again: a double-submitted PUT is a no-op (AR1).
+			this.users.findByIdForUpdate(userId).orElseThrow();
+			Set<String> locked = new TreeSet<>(this.roles.storeRoleCodes(userId));
+			Set<String> added = minus(wanted.keySet(), locked);
+			Set<String> removed = minus(locked, wanted.keySet());
+			guard(userId, callerId, added, removed, client, null);
 			if (removed.contains("OWNER")) {
 				UUID owner = this.roles.lockRole("OWNER");
 				if (this.roles.countHolders(owner) <= 1) {
@@ -132,20 +136,18 @@ public class RoleAssignmentService {
 		requireUser(userId);
 		this.branches.requireExists(branchId);
 		Map<String, RoleQueries.Role> wanted = resolve(roleCodes, "BRANCH");
-		Set<String> current = new TreeSet<>();
-		this.roles.branchRoles(userId)
-			.stream()
-			.filter(role -> role.branchId().equals(branchId))
-			.forEach(role -> current.add(role.roleCode()));
-		Set<String> added = minus(wanted.keySet(), current);
-		Set<String> removed = minus(current, wanted.keySet());
-		guard(userId, callerId, added, removed, client, branchId);
-		if (!added.isEmpty() && !this.assignments.activeBranchIds(userId).contains(branchId)) {
+		Set<String> current = currentAt(userId, branchId);
+		guard(userId, callerId, minus(wanted.keySet(), current), minus(current, wanted.keySet()), client, branchId);
+		if (!minus(wanted.keySet(), current).isEmpty() && !this.assignments.activeBranchIds(userId).contains(branchId)) {
 			throw new DomainException(IdentityErrorCode.ROLE_REQUIRES_ASSIGNMENT,
 					"No ACTIVE assignment at Branch " + branchId);
 		}
 		this.transactions.executeWithoutResult(status -> {
 			Instant now = this.clock.instant();
+			this.users.findByIdForUpdate(userId).orElseThrow();
+			Set<String> locked = currentAt(userId, branchId);
+			Set<String> added = minus(wanted.keySet(), locked);
+			Set<String> removed = minus(locked, wanted.keySet());
 			for (String code : removed) {
 				this.roles.revokeBranchRole(userId, branchId, this.roles.findRole(code).orElseThrow().id());
 				record(callerId, client, "ROLE_REVOKE", userId,
@@ -207,6 +209,15 @@ public class RoleAssignmentService {
 					metadata);
 			throw new DomainException(refusal, "Role change refused: " + refusal);
 		}
+	}
+
+	private Set<String> currentAt(UUID userId, UUID branchId) {
+		Set<String> current = new TreeSet<>();
+		this.roles.branchRoles(userId)
+			.stream()
+			.filter(role -> role.branchId().equals(branchId))
+			.forEach(role -> current.add(role.roleCode()));
+		return current;
 	}
 
 	/** No STORE role and no BRANCH role left → the user's Backoffice sessions end (AR4); Customer ones stay. */

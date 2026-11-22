@@ -14,8 +14,15 @@ public interface CustomerProfiles {
 	/** The user's profile, for {@code GET /auth/me} (Decision AO2). */
 	Optional<Summary> findByUser(UUID userId);
 
-	record Summary(UUID customerId, String displayName) {
+	record Summary(UUID customerId, String displayName, long version) {
 	}
+
+	/**
+	 * Renames the user's profile at {@code expectedVersion} (API 07 §1, Decision O); the same name keeps the version.
+	 * @throws vn.hayi.shop.shared.error.DomainException {@code CUSTOMER_PROFILE_NOT_FOUND},
+	 * {@code VERSION_CONFLICT}
+	 */
+	Summary rename(UUID userId, String displayName, long expectedVersion);
 
 	/**
 	 * @return the new {@code customerId}

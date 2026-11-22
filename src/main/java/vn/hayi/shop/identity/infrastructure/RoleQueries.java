@@ -3,7 +3,10 @@ package vn.hayi.shop.identity.infrastructure;
 import static vn.hayi.shop.platform.persistence.UuidBinary.toBytes;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -76,11 +79,11 @@ public class RoleQueries {
 				LEFT JOIN iam_permission p ON p.id = rp.permission_id
 				ORDER BY r.allowed_scope DESC, r.code, p.code
 				""").query().listOfRows();
-		java.util.Map<String, RoleWithPermissions> byCode = new java.util.LinkedHashMap<>();
+		Map<String, RoleWithPermissions> byCode = new LinkedHashMap<>();
 		for (var row : rows) {
 			RoleWithPermissions role = byCode.computeIfAbsent((String) row.get("code"),
 					code -> new RoleWithPermissions(code, (String) row.get("name"), (String) row.get("allowed_scope"),
-							toBoolean(row.get("requires_mfa")), new java.util.ArrayList<>()));
+							toBoolean(row.get("requires_mfa")), new ArrayList<>()));
 			if (row.get("permission") != null) {
 				role.permissions().add((String) row.get("permission"));
 			}
@@ -124,7 +127,7 @@ public class RoleQueries {
 
 	/** Users holding OWNER, read with a lock on the role row first (Decision AR3). */
 	public int countHolders(UUID roleId) {
-		return this.jdbc.sql("SELECT COUNT(*) FROM iam_user_store_role WHERE role_id = ?")
+		return this.jdbc.sql("SELECT COUNT(*) FROM iam_user_store_role WHERE role_id = ? FOR UPDATE")
 			.param(toBytes(roleId)).query(Integer.class).single();
 	}
 
