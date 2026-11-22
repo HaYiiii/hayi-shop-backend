@@ -64,7 +64,10 @@ hayi:
     public:                                      # per IP per minute on /api/public/v1 (Decision W9)
       get-per-minute: ${HAYI_RATE_LIMIT_PUBLIC_GET:120}
       resolve-per-minute: ${HAYI_RATE_LIMIT_PUBLIC_RESOLVE:30}
-      trusted-proxies: ${HAYI_RATE_LIMIT_TRUSTED_PROXIES:}   # comma-separated IPs/CIDRs whose X-Forwarded-For is believed
+      # Comma-separated IPs/CIDRs whose X-Forwarded-For is believed. List every hop between the browser and the API:
+      # CDN/ingress and the web that proxies /api/* on its own origin (Next.js rewrites, Backoffice route —
+      # Decision AU3); otherwise every client counts as the proxy's IP. Also used for OTP (AN5) and login (AO4).
+      trusted-proxies: ${HAYI_RATE_LIMIT_TRUSTED_PROXIES:}
       max-tracked-clients: ${HAYI_RATE_LIMIT_MAX_TRACKED:100000}   # in-memory counters per instance, LRU above it
   storage:                                      # S3-compatible object storage (Decision H5, AF4)
     endpoint: ${HAYI_STORAGE_ENDPOINT:http://localhost:8333}   # local SeaweedFS (compose.yaml)
