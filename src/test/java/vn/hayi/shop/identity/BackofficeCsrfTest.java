@@ -23,7 +23,7 @@ import vn.hayi.shop.identity.BackofficeAuth.Session;
 
 /**
  * Double-submit CSRF bound to the session (API 01-security §3.1): every unsafe request riding on auth cookies needs
- * {@code X-CSRF-Token} equal to {@code hy_csrf}, minted for the same session; otherwise {@code 403 CSRF_INVALID} and a
+ * {@code X-CSRF-Token} equal to {@code hy_b_csrf}, minted for the same session; otherwise {@code 403 CSRF_INVALID} and a
  * {@code CSRF_VALIDATION_FAILED} security event.
  */
 @SpringBootTest

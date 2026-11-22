@@ -23,12 +23,12 @@ public class AuthCookies {
 	public List<ResponseCookie> session(Surface surface, String accessToken, String refreshToken,
 			Duration refreshLifetime, String csrfToken) {
 		return List.of(access(surface, accessToken, this.properties.accessTokenTtl()),
-				refresh(surface, refreshToken, refreshLifetime), csrf(csrfToken, refreshLifetime));
+				refresh(surface, refreshToken, refreshLifetime), csrf(surface, csrfToken, refreshLifetime));
 	}
 
 	/** @param lifetime {@code null} for a browser-session cookie (re-issue without a known refresh lifetime) */
-	public ResponseCookie csrf(String csrfToken, Duration lifetime) {
-		ResponseCookie.ResponseCookieBuilder cookie = ResponseCookie.from(CsrfTokens.COOKIE, csrfToken)
+	public ResponseCookie csrf(Surface surface, String csrfToken, Duration lifetime) {
+		ResponseCookie.ResponseCookieBuilder cookie = ResponseCookie.from(surface.csrfCookie(), csrfToken)
 			.secure(true)
 			.sameSite("Lax")
 			.path("/");
@@ -41,7 +41,7 @@ public class AuthCookies {
 	/** Expires every auth cookie of the surface (logout, API 01-security §3). */
 	public List<ResponseCookie> cleared(Surface surface) {
 		return List.of(access(surface, "", Duration.ZERO), refresh(surface, "", Duration.ZERO),
-				csrf("", Duration.ZERO));
+				csrf(surface, "", Duration.ZERO));
 	}
 
 	private static ResponseCookie access(Surface surface, String value, Duration maxAge) {

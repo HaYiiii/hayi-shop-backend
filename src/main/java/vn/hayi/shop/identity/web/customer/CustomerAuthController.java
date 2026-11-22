@@ -123,7 +123,7 @@ class CustomerAuthController implements CustomerAuthApi {
 	@Override
 	public ResponseEntity<Void> issueCustomerCsrfToken() {
 		AuthenticatedSession session = AuthenticatedSession.require();
-		ResponseCookie csrf = this.cookies.csrf(this.csrfTokens.issue(session.sessionId()), null);
+		ResponseCookie csrf = this.cookies.csrf(Surface.CUSTOMER, this.csrfTokens.issue(session.sessionId()), null);
 		return ResponseEntity.noContent().headers(setCookies(List.of(csrf))).build();
 	}
 

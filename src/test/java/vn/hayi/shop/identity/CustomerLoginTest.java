@@ -162,7 +162,7 @@ class CustomerLoginTest {
 		assertThat(this.mvc.perform(get(AUTH + "/me").cookie(new Cookie("hy_c_at", staff.access())))
 			.andReturn().getResponse().getStatus()).as("Backoffice token on the Customer surface").isEqualTo(401);
 		assertProblem(this.mvc.perform(post(AUTH + "/refresh").cookie(new Cookie("hy_c_rt", staff.refresh()),
-				new Cookie("hy_csrf", staff.csrf())).header("X-CSRF-Token", staff.csrf())).andReturn().getResponse(),
+				new Cookie("hy_c_csrf", staff.csrf())).header("X-CSRF-Token", staff.csrf())).andReturn().getResponse(),
 				401, "AUTH_REQUIRED");
 	}
 
@@ -181,6 +181,68 @@ class CustomerLoginTest {
 			.andReturn().getResponse().getStatus()).as("Backoffice session untouched").isNotEqualTo(401);
 	}
 
+	// --- one browser, both surfaces (Decision AP1, BE #103) ----------------------------------------------------
+
+	@Test
+	void bothSurfacesKeepTheirOwnCsrfCookieInOneBrowser() throws Exception {
+		String email = IdentityFixtures.uniqueEmail();
+		this.fixtures.storeAdmin(email);
+		BackofficeAuth backoffice = new BackofficeAuth(this.mvc, this.clock);
+		MockHttpServletResponse staffLogin = backoffice.login(email, IdentityFixtures.PASSWORD);
+		Session staff = backoffice.loginSession(email, IdentityFixtures.PASSWORD);
+		MockHttpServletResponse customerLogin = login(customer("Hà").national(), PASSWORD);
+		assertThat(customerLogin.getCookie("hy_b_csrf")).as("Customer login leaves the Backoffice cookie").isNull();
+		assertThat(setCookie(customerLogin, "hy_c_csrf")).contains("Path=/;");
+		Jar jar = Jar.from(customerLogin);
+
+		MockHttpServletResponse csrf = perform(get(AUTH + "/csrf"), jar, false);
+		assertThat(csrf.getCookie("hy_b_csrf")).as("re-issue on one surface only").isNull();
+		jar = jar.update(csrf);
+
+		MockHttpServletResponse staffRefresh = backoffice.refresh(staff);
+		assertThat(staffRefresh.getStatus()).as(staffRefresh.getContentAsString()).isEqualTo(204);
+		staff = staff.update(staffRefresh);
+		MockHttpServletResponse customerRefresh = perform(post(AUTH + "/refresh"), jar, true);
+		assertThat(customerRefresh.getStatus()).as(customerRefresh.getContentAsString()).isEqualTo(204);
+		assertThat(staffLogin.getStatus()).isEqualTo(200);
+
+		assertThat(this.mvc.perform(post("/api/backoffice/v1/auth/refresh")
+			.cookie(new Cookie("hy_b_rt", staff.refresh()), new Cookie("hy_c_csrf", jar.csrf()))
+			.header("X-CSRF-Token", jar.csrf())).andReturn().getResponse().getStatus())
+			.as("the Customer cookie is not read on the Backoffice").isEqualTo(403);
+	}
+
+	// --- review of PR #102 -------------------------------------------------------------------------------------
+
+	@Test
+	void loginsWithoutACustomerProfileNeverLockTheAccount() throws Exception {
+		UUID staff = this.fixtures.branchStaff();
+		String national = freshNational();
+		addPhone(staff, "+84" + national.substring(1));
+
+		for (int i = 0; i < 6; i++) {
+			assertProblem(login(national, IdentityFixtures.PASSWORD), 401, "AUTH_INVALID_CREDENTIALS");
+		}
+	}
+
+	@Test
+	void logoutOnOneSurfaceLeavesTheOtherSessionAlone() throws Exception {
+		UUID staffUser = this.fixtures.branchStaff();
+		String national = freshNational();
+		addPhone(staffUser, "+84" + national.substring(1));
+		addProfile(staffUser, "Minh");
+		Jar customerJar = Jar.from(login(national, IdentityFixtures.PASSWORD));
+		Session backoffice = this.fixtures.openSession(staffUser);
+
+		MockHttpServletResponse out = this.mvc.perform(post("/api/backoffice/v1/auth/logout")
+			.cookie(new Cookie("hy_b_at", backoffice.access()), new Cookie("hy_b_csrf", backoffice.csrf()))
+			.header("X-CSRF-Token", backoffice.csrf())).andReturn().getResponse();
+		assertThat(out.getStatus()).as(out.getContentAsString()).isEqualTo(204);
+		assertThat(out.getCookie("hy_c_at")).as("Customer cookies untouched").isNull();
+
+		assertThat(perform(get(AUTH + "/me"), customerJar, false).getStatus()).isEqualTo(200);
+	}
+
 	// --- helpers ------------------------------------------------------------------------------------------------
 
 	record Customer(UUID userId, String customerId, String national, String e164) {
@@ -191,12 +253,12 @@ class CustomerLoginTest {
 
 		static Jar from(MockHttpServletResponse response) {
 			assertThat(response.getCookie("hy_c_at")).as("logged in").isNotNull();
-			return new Jar(value(response, "hy_c_at"), value(response, "hy_c_rt"), value(response, "hy_csrf"));
+			return new Jar(value(response, "hy_c_at"), value(response, "hy_c_rt"), value(response, "hy_c_csrf"));
 		}
 
 		Jar update(MockHttpServletResponse response) {
 			return new Jar(orElse(value(response, "hy_c_at"), this.access), orElse(value(response, "hy_c_rt"), this.refresh),
-					orElse(value(response, "hy_csrf"), this.csrf));
+					orElse(value(response, "hy_c_csrf"), this.csrf));
 		}
 
 		Jar withCsrf(String csrf) {
@@ -217,7 +279,7 @@ class CustomerLoginTest {
 	private MockHttpServletResponse perform(MockHttpServletRequestBuilder request, Jar jar, boolean csrfHeader)
 			throws Exception {
 		request.cookie(new Cookie("hy_c_at", jar.access()), new Cookie("hy_c_rt", jar.refresh()),
-				new Cookie("hy_csrf", jar.csrf()));
+				new Cookie("hy_c_csrf", jar.csrf()));
 		if (csrfHeader) {
 			request.header("X-CSRF-Token", jar.csrf());
 		}

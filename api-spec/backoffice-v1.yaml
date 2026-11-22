@@ -7,7 +7,7 @@ info:
     HaYi-Shop-Canonical-VI/docs/architecture/api/*.md before implementation.
 
     Authentication uses cookies only (API 01-security §3): `hy_b_at` (access JWT), `hy_b_rt` (refresh token)
-    and `hy_csrf` (double-submit token, sent back as `X-CSRF-Token` on every unsafe request with a session).
+    and `hy_b_csrf` (double-submit token, sent back as `X-CSRF-Token` on every unsafe request with a session).
 
     Authorization (Decision M): every endpoint outside `/auth` needs a permission of API 01-security §7, checked in
     this order: missing permission → `403 PERMISSION_DENIED`; `{branchId}` outside the caller's scope or malformed →
@@ -45,7 +45,7 @@ paths:
       operationId: login
       summary: Log in with email and password
       description: |
-        On success sets `hy_b_at`, `hy_b_rt` and `hy_csrf` and every flag of the response is false.
+        On success sets `hy_b_at`, `hy_b_rt` and `hy_b_csrf` and every flag of the response is false.
         Otherwise exactly one step comes first, and no cookie is set:
         a temporary password → `passwordChangeRequired` + `changeToken` (Decision K3); an active MFA factor →
         `mfaRequired` + `mfaChallengeId` (`POST /auth/mfa/verify`); a STORE role without MFA →
@@ -231,7 +231,7 @@ paths:
       tags: [Auth]
       operationId: issueCsrfToken
       summary: Re-issue the CSRF cookie
-      description: Sets a fresh `hy_csrf` bound to the current session (API 01-security §3.1).
+      description: Sets a fresh `hy_b_csrf` bound to the current session (API 01-security §3.1).
       responses:
         '204':
           description: CSRF cookie set.
@@ -2309,7 +2309,7 @@ components:
       name: X-CSRF-Token
       in: header
       required: false
-      description: Value of the `hy_csrf` cookie; missing or wrong → `403 CSRF_INVALID`.
+      description: Value of the `hy_b_csrf` cookie (the Backoffice one, Decision AP1); missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
     IfMatch:
       name: If-Match
