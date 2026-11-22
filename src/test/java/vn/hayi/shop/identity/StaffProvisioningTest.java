@@ -2,12 +2,14 @@ package vn.hayi.shop.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,6 +31,8 @@ import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
 import vn.hayi.shop.identity.BackofficeAuth.Session;
+import vn.hayi.shop.identity.domain.IdentifierType;
+import vn.hayi.shop.identity.domain.LoginIdentifierRepository;
 import vn.hayi.shop.identity.infrastructure.RoleQueries;
 import vn.hayi.shop.platform.persistence.UuidBinary;
 import vn.hayi.shop.shared.id.UuidV7;
@@ -64,6 +68,9 @@ class StaffProvisioningTest {
 
 	@MockitoSpyBean
 	RoleQueries roles;
+
+	@MockitoSpyBean
+	LoginIdentifierRepository identifiers;
 
 	BackofficeAuth auth;
 
@@ -224,6 +231,40 @@ class StaffProvisioningTest {
 				404, "STAFF_NOT_FOUND");
 		assertProblem(this.auth.perform(get(STAFF + "/" + UUID.randomUUID()), this.owner, false), 404,
 				"STAFF_NOT_FOUND");
+	}
+
+	// --- review of PR #105 ------------------------------------------------------------------------------------
+
+	@Test
+	void twoCreatesWithOneNewEmailAtOnceEndInAConflictNotAnError() throws Exception {
+		String email = IdentityFixtures.uniqueEmail();
+		String one = "[" + assignment(this.branch, "PRIMARY") + "]";
+		assertThat(create(body(code(), null, email, one, "[]", "TEMPORARY_PASSWORD")).getStatus()).isEqualTo(201);
+		// The second request looked the email up before the first one committed.
+		doReturn(Optional.empty()).when(this.identifiers).findByTypeAndNormalizedValue(IdentifierType.EMAIL,
+				email.toLowerCase());
+
+		assertProblem(create(body(code(), null, email, one, "[]", "TEMPORARY_PASSWORD")), 409,
+				"STAFF_IDENTIFIER_CONFLICT");
+	}
+
+	@Test
+	void anUnknownRoleIsAMalformedRequest() throws Exception {
+		assertProblem(create(body(code(), null, IdentityFixtures.uniqueEmail(),
+				"[" + assignment(this.branch, "PRIMARY") + "]", "[" + role(this.branch, "NO_SUCH_ROLE") + "]",
+				"TEMPORARY_PASSWORD")), 400, "VALIDATION_FAILED");
+	}
+
+	@Test
+	void anInactiveStaffMemberWithoutAStoreRoleCannotLogIn() throws Exception {
+		String email = IdentityFixtures.uniqueEmail();
+		MockHttpServletResponse created = create(body(code(), null, email,
+				"[" + assignment(this.branch, "PRIMARY") + "]", "[]", "TEMPORARY_PASSWORD"));
+		String temporary = JsonPath.read(created.getContentAsString(), "$.temporaryPassword");
+		this.jdbc.sql("UPDATE stf_staff_profile SET status = 'INACTIVE' WHERE id = UUID_TO_BIN(?)")
+			.param(JsonPath.<String>read(created.getContentAsString(), "$.staffId")).update();
+
+		assertProblem(this.auth.login(email, temporary), 401, "AUTH_INVALID_CREDENTIALS");
 	}
 
 	// --- helpers ------------------------------------------------------------------------------------------------

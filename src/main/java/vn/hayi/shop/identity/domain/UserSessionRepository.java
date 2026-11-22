@@ -1,7 +1,10 @@
 package vn.hayi.shop.identity.domain;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
+import vn.hayi.shop.shared.actor.Persona;
 
 import jakarta.persistence.LockModeType;
 
@@ -19,5 +22,8 @@ public interface UserSessionRepository extends Repository<UserSession, UUID> {
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select s from UserSession s where s.id = :id")
 	Optional<UserSession> findByIdForUpdate(UUID id);
+
+	/** The user's sessions of one persona that are not revoked yet (offboarding, Decision AR4). */
+	List<UserSession> findByUserIdAndPersonaAndRevokedAtIsNull(UUID userId, Persona persona);
 
 }

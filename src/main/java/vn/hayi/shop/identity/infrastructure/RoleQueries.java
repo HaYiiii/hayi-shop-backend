@@ -68,6 +68,66 @@ public class RoleQueries {
 				toBytes(grantedBy)).update();
 	}
 
+	/** Every system role with its permission codes, by scope then code (Decision AR1). */
+	public List<RoleWithPermissions> allRoles() {
+		var rows = this.jdbc.sql("""
+				SELECT r.code, r.name, r.allowed_scope, r.requires_mfa, p.code AS permission
+				FROM iam_role r LEFT JOIN iam_role_permission rp ON rp.role_id = r.id
+				LEFT JOIN iam_permission p ON p.id = rp.permission_id
+				ORDER BY r.allowed_scope DESC, r.code, p.code
+				""").query().listOfRows();
+		java.util.Map<String, RoleWithPermissions> byCode = new java.util.LinkedHashMap<>();
+		for (var row : rows) {
+			RoleWithPermissions role = byCode.computeIfAbsent((String) row.get("code"),
+					code -> new RoleWithPermissions(code, (String) row.get("name"), (String) row.get("allowed_scope"),
+							toBoolean(row.get("requires_mfa")), new java.util.ArrayList<>()));
+			if (row.get("permission") != null) {
+				role.permissions().add((String) row.get("permission"));
+			}
+		}
+		return List.copyOf(byCode.values());
+	}
+
+	private static boolean toBoolean(Object value) {
+		return (value instanceof Boolean flag) ? flag : (value instanceof Number number) && number.intValue() != 0;
+	}
+
+	public record RoleWithPermissions(String code, String name, String scope, boolean requiresMfa,
+			List<String> permissions) {
+	}
+
+	/** The user's STORE role codes, sorted. */
+	public List<String> storeRoleCodes(UUID userId) {
+		return this.jdbc.sql("""
+				SELECT r.code FROM iam_user_store_role usr JOIN iam_role r ON r.id = usr.role_id
+				WHERE usr.user_id = ? ORDER BY r.code
+				""").param(toBytes(userId)).query(String.class).list();
+	}
+
+	public void grantStoreRole(UUID userId, UUID roleId, UUID grantedBy, Instant now) {
+		this.jdbc.sql("""
+				INSERT INTO iam_user_store_role (id, user_id, role_id, granted_at, granted_by_user_id)
+				VALUES (?, ?, ?, ?, ?)
+				""").params(toBytes(UuidV7.generate()), toBytes(userId), toBytes(roleId), now, toBytes(grantedBy))
+			.update();
+	}
+
+	public void revokeStoreRole(UUID userId, UUID roleId) {
+		this.jdbc.sql("DELETE FROM iam_user_store_role WHERE user_id = ? AND role_id = ?")
+			.params(toBytes(userId), toBytes(roleId)).update();
+	}
+
+	public void revokeBranchRole(UUID userId, UUID branchId, UUID roleId) {
+		this.jdbc.sql("DELETE FROM iam_user_branch_role WHERE user_id = ? AND branch_id = ? AND role_id = ?")
+			.params(toBytes(userId), toBytes(branchId), toBytes(roleId)).update();
+	}
+
+	/** Users holding OWNER, read with a lock on the role row first (Decision AR3). */
+	public int countHolders(UUID roleId) {
+		return this.jdbc.sql("SELECT COUNT(*) FROM iam_user_store_role WHERE role_id = ?")
+			.param(toBytes(roleId)).query(Integer.class).single();
+	}
+
 	/** The user's BRANCH roles, by Branch then role code. */
 	public List<BranchRole> branchRoles(UUID userId) {
 		return this.jdbc.sql("""

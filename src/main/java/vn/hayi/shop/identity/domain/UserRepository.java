@@ -18,4 +18,6 @@ public interface UserRepository extends Repository<User, UUID> {
 	@Query("select u from User u where u.id = :id")
 	Optional<User> findByIdForUpdate(UUID id);
 
+	Optional<User> findById(UUID id);
+
 }
