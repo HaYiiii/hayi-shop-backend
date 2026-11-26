@@ -15,14 +15,16 @@ public interface CartRepository extends Repository<Cart, UUID> {
 	Optional<Cart> findActive(UUID customerId, UUID branchId);
 
 	/**
-	 * Locks the row, so concurrent changes to one Cart run one after the other, and moves its version once: item
-	 * changes alone do not (they are excluded from optimistic locking), and a fresh Cart's {@code updatedAt} may not
-	 * change either.
+	 * Locks the Cart row, so concurrent changes to one Cart run one after the other, and moves its version once (its
+	 * items and {@code updatedAt} are excluded from optimistic locking).
+	 * <p>
+	 * Call it in a {@code READ_COMMITTED} transaction: the items are loaded afterwards by a plain read, which under
+	 * REPEATABLE READ would see the snapshot taken before the lock and miss what a concurrent change just committed.
+	 * (A {@code join fetch} does not help: Hibernate reads the join first and locks the Cart row in a follow-on
+	 * query.)
 	 */
 	@Lock(LockModeType.PESSIMISTIC_FORCE_INCREMENT)
 	@Query("select c from Cart c where c.customerId = :customerId and c.branchId = :branchId and c.status = vn.hayi.shop.cart.domain.CartStatus.ACTIVE")
 	Optional<Cart> findActiveForUpdate(UUID customerId, UUID branchId);
-
-	Cart save(Cart cart);
 
 }

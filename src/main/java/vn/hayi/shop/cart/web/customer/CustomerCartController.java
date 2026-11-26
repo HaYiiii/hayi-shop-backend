@@ -52,6 +52,8 @@ class CustomerCartController implements CartApi {
 		Instant at = instant(body.getAt());
 		this.carts.add(userId, branchId, body.getProductId(), body.getVariantId(),
 				(body.getOptionItemIds() != null) ? body.getOptionItemIds() : List.of(), body.getQuantity(), note, at);
+		// A second read after the add committed: it shows the whole Cart priced now, and may already hold a concurrent
+		// add to the same Cart (its version then says so).
 		return ResponseEntity.ok(toDto(this.carts.view(userId, branchId, at)));
 	}
 

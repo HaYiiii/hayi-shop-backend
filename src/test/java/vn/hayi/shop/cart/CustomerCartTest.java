@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntFunction;
 
 import jakarta.servlet.http.Cookie;
 
@@ -233,6 +234,19 @@ class CustomerCartTest {
 	}
 
 	@Test
+	void aCartHoldsAtMostFiftyDifferentItems() throws Exception {
+		for (int i = 0; i < 50; i++) {
+			assertThat(this.ha.perform(add(item(this.latte, 1, "món " + i))).getStatus()).isEqualTo(200);
+		}
+
+		assertProblem(this.ha.perform(add(item(this.latte, 1, "món 50"))), 422, "CART_ITEM_LIMIT");
+		assertThat(this.ha.perform(add(item(this.latte, 1, "món 0"))).getStatus()).as("an equivalent one still adds")
+			.isEqualTo(200);
+		assertThat(JsonPath.<List<?>>read(this.ha.perform(get(cartPath())).getContentAsString(), "$.items"))
+			.hasSize(50);
+	}
+
+	@Test
 	void theRequestIsBoundedAndNeedsTheCsrfToken() throws Exception {
 		assertProblem(this.ha.perform(add(item(this.latte, 1, "x".repeat(256)))), 400, "VALIDATION_FAILED");
 		assertProblem(this.ha.perform(add(item(this.latte, 0, null))), 400, "VALIDATION_FAILED");
@@ -262,28 +276,44 @@ class CustomerCartTest {
 	@Test
 	void twoFirstAddsAtOnceLeaveExactlyOneActiveCartWithBothItems() throws Exception {
 		UUID mocha = product(45000);
-		CountDownLatch start = new CountDownLatch(1);
-		ExecutorService pool = Executors.newFixedThreadPool(2);
-		try {
-			List<Future<MockHttpServletResponse>> calls = new ArrayList<>();
-			for (UUID product : List.of(this.latte, mocha)) {
-				calls.add(pool.submit(() -> {
-					start.await();
-					return this.ha.perform(add(item(product, 1, null)));
-				}));
-			}
-			start.countDown();
-			for (Future<MockHttpServletResponse> call : calls) {
-				MockHttpServletResponse response = call.get();
-				assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
-			}
-		}
-		finally {
-			pool.shutdownNow();
-		}
+		List<UUID> products = List.of(this.latte, mocha);
+
+		assertAllOk(concurrently(2, i -> add(item(products.get(i), 1, null))));
 
 		assertThat(cartRows(this.ha)).isEqualTo(1);
 		assertThat(JsonPath.<List<?>>read(this.ha.perform(get(cartPath())).getContentAsString(), "$.items")).hasSize(2);
+	}
+
+	@Test
+	void concurrentEquivalentAddsToAnExistingCartLoseNoQuantity() throws Exception {
+		this.ha.perform(add(item(this.latte, 1, null)));
+
+		assertAllOk(concurrently(8, i -> add(item(this.latte, 1, null))));
+
+		assertThat(JsonPath.<List<Integer>>read(this.ha.perform(get(cartPath())).getContentAsString(),
+				"$.items[*].quantity")).containsExactly(9);
+	}
+
+	@Test
+	void concurrentFirstAddsOfOneNewItemToAnExistingCartMakeOneItem() throws Exception {
+		this.ha.perform(add(item(this.latte, 1, "khác")));
+
+		assertAllOk(concurrently(8, i -> add(item(this.latte, 1, null))));
+
+		assertThat(JsonPath.<List<Integer>>read(this.ha.perform(get(cartPath())).getContentAsString(),
+				"$.items[*].quantity")).containsExactly(1, 8);
+	}
+
+	@Test
+	void concurrentAddsCannotPassTheQuantityLimit() throws Exception {
+		this.ha.perform(add(item(this.latte, 90, null)));
+
+		List<MockHttpServletResponse> responses = concurrently(8, i -> add(item(this.latte, 3, null)));
+
+		assertThat(responses.stream().map(MockHttpServletResponse::getStatus))
+			.containsExactlyInAnyOrder(200, 200, 200, 422, 422, 422, 422, 422);
+		assertThat(JsonPath.<List<Integer>>read(this.ha.perform(get(cartPath())).getContentAsString(),
+				"$.items[*].quantity")).containsExactly(99);
 	}
 
 	@Test
@@ -403,6 +433,38 @@ class CustomerCartTest {
 		UUID variant = this.variants.getOrDefault(productId, UuidV7.generate());
 		return "{\"productId\": \"%s\", \"variantId\": \"%s\", \"optionItemIds\": [%s], \"quantity\": %d, \"note\": %s}"
 			.formatted(productId, variant, ids, quantity, (note != null) ? "\"" + note + "\"" : "null");
+	}
+
+	/** Sends {@code count} requests of the signed-in Customer at once and waits for every response. */
+	private List<MockHttpServletResponse> concurrently(int count, IntFunction<MockHttpServletRequestBuilder> request)
+			throws Exception {
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(count);
+		try {
+			List<Future<MockHttpServletResponse>> calls = new ArrayList<>();
+			for (int i = 0; i < count; i++) {
+				int index = i;
+				calls.add(pool.submit(() -> {
+					start.await();
+					return this.ha.perform(request.apply(index));
+				}));
+			}
+			start.countDown();
+			List<MockHttpServletResponse> responses = new ArrayList<>();
+			for (Future<MockHttpServletResponse> call : calls) {
+				responses.add(call.get());
+			}
+			return responses;
+		}
+		finally {
+			pool.shutdownNow();
+		}
+	}
+
+	private static void assertAllOk(List<MockHttpServletResponse> responses) throws Exception {
+		for (MockHttpServletResponse response : responses) {
+			assertThat(response.getStatus()).as(response.getContentAsString()).isEqualTo(200);
+		}
 	}
 
 	private long cartRows(Customer customer) {

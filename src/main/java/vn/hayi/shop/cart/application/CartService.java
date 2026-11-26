@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import vn.hayi.shop.cart.domain.Cart;
@@ -83,12 +84,13 @@ public class CartService {
 
 	/**
 	 * Adds an item checked at {@code at} (AV2). The Cart is created on first use; two first adds at once leave one
-	 * Cart, and adds to one Cart run one after the other (the row is locked).
+	 * Cart, and adds to one Cart run one after the other (the row is locked). {@code READ_COMMITTED}, so the items
+	 * read after the lock include every change committed before it (see {@link CartRepository#findActiveForUpdate}).
 	 * @param note already normalized ({@link CartSelection#normalizeNote})
 	 * @throws CartItemInvalidException when the resolver finds any issue; nothing is added
 	 * @throws DomainException {@code BRANCH_NOT_FOUND}, {@code CART_ITEM_QUANTITY_LIMIT}, {@code CART_ITEM_LIMIT}
 	 */
-	@Transactional
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	public void add(UUID userId, UUID branchId, UUID productId, UUID variantId, List<UUID> optionItemIds, int quantity,
 			String note, Instant at) {
 		UUID customerId = customerOf(userId);
@@ -107,8 +109,8 @@ public class CartService {
 					.map(option -> new CartItemOption(option.optionItemId(), option.optionGroupId()))
 					.toList(),
 				note);
+		// Managed: a new item is persisted by cascade when the transaction flushes.
 		cart.add(selection, quantity, line.unitPrice(), now);
-		this.carts.save(cart);
 	}
 
 	/** Stripped, inner whitespace collapsed, blank → {@code null} (Cart & Pricing §6.3, Decision AV2). */
@@ -168,19 +170,24 @@ public class CartService {
 		Map<UUID, ResolvedOption> offered = new HashMap<>();
 		line.options().forEach(option -> offered.put(option.optionItemId(), option));
 		// The stored set has no order: show the Catalog's (group, then item), unknown items last by id.
+		Map<UUID, Integer> position = new HashMap<>();
 		List<UUID> order = line.normalizedOptionItemIds();
+		for (int i = 0; i < order.size(); i++) {
+			position.put(order.get(i), i);
+		}
 		List<CartView.Option> options = item.getOptions()
 			.stream()
-			.sorted(Comparator.comparingInt((CartItemOption option) -> order.contains(option.optionItemId())
-					? order.indexOf(option.optionItemId()) : Integer.MAX_VALUE)
+			.sorted(Comparator
+				.comparingInt((CartItemOption option) -> position.getOrDefault(option.optionItemId(), Integer.MAX_VALUE))
 				.thenComparing(option -> option.optionItemId().toString()))
 			.map(option -> {
-			ResolvedOption resolved = offered.get(option.optionItemId());
-			return (resolved != null)
-					? new CartView.Option(option.optionItemId(), resolved.optionGroupName(), resolved.optionItemName(),
-							resolved.extraPrice())
-					: new CartView.Option(option.optionItemId(), null, null, null);
-		}).toList();
+				ResolvedOption resolved = offered.get(option.optionItemId());
+				return (resolved != null)
+						? new CartView.Option(option.optionItemId(), resolved.optionGroupName(),
+								resolved.optionItemName(), resolved.extraPrice())
+						: new CartView.Option(option.optionItemId(), null, null, null);
+			})
+			.toList();
 		return new CartView.Item(item.getId(), item.getProductId(), line.productName(), item.getVariantId(),
 				line.variantName(), options, item.getNote(), item.getQuantity(), line.unitPrice(), line.lineTotal(),
 				line.issues().stream().map(CartView.ItemIssue::of).toList());
