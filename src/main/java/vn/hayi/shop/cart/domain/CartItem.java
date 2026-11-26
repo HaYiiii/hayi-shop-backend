@@ -78,6 +78,21 @@ public class CartItem {
 		this.updatedAt = now;
 	}
 
+	/** The same Product with another size, options, note or quantity (Decision AW1). */
+	void change(CartSelection selection, int quantity, Long unitPrice, Instant now) {
+		if (!selection.productId().equals(this.productId)) {
+			throw new IllegalArgumentException("An edit keeps the Product of item " + this.id);
+		}
+		this.variantId = selection.variantId();
+		this.options.clear();
+		this.options.addAll(selection.options());
+		this.noteNormalized = selection.note();
+		this.equivalenceKey = selection.equivalenceKey();
+		this.quantity = quantity;
+		this.lastSeenUnitPrice = unitPrice;
+		this.updatedAt = now;
+	}
+
 	public UUID getId() {
 		return this.id;
 	}
