@@ -13,6 +13,8 @@ tags:
     description: Customer registration by phone OTP (API 01-security §6.1, Identity §2.11, Decision AN)
   - name: CustomerProfile
     description: The signed-in Customer's own profile (API 07 §1, Customer §3.2)
+  - name: Cart
+    description: The signed-in Customer's server Cart per Branch (API 03 §1, Cart & Pricing §6, Decision AV)
 security:
   - accessCookie: []
 paths:
@@ -316,6 +318,77 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '412': { $ref: '#/components/responses/VersionConflict' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /branches/{branchId}/cart:
+    parameters:
+      - $ref: '#/components/parameters/BranchIdPath'
+    get:
+      tags: [Cart]
+      operationId: getCart
+      summary: The caller's Cart at a Branch
+      description: |
+        The caller's `ACTIVE` Cart at the Branch; none yet → an empty Cart (`cartId: null`, `version: 0`,
+        `updatedAt: null`) and nothing is created (Decision AV1). Every item is resolved again through the Catalog
+        resolver at `at` (the planned pickup time, default now): current `unitPrice` / `lineTotal` (`null` when the
+        Product or size is unknown), names from the Catalog (`null` when gone), and each resolver issue as `BLOCKING`.
+        An item that went out after it was added stays, flagged (Decision F). Writes nothing. Branch unknown or not
+        `ACTIVE` → `404 BRANCH_NOT_FOUND`.
+      parameters:
+        - $ref: '#/components/parameters/AtQuery'
+      responses:
+        '200':
+          description: The Cart.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/BranchNotFound' }
+  /branches/{branchId}/cart/items:
+    parameters:
+      - $ref: '#/components/parameters/BranchIdPath'
+    post:
+      tags: [Cart]
+      operationId: addCartItem
+      summary: Add an item to the caller's Cart at a Branch
+      description: |
+        Resolves the item at `at` (default now). Any issue → `422 CART_ITEM_INVALID` with `issues[]`, nothing added.
+        Otherwise the `ACTIVE` Cart is created on first use; an equivalent item (same product, size, options and
+        normalized note) gets the quantity added, else a new item is added. `note` is stripped with inner whitespace
+        collapsed, blank → `null`, at most 255 characters. A total above 99 for one item → `422 CART_ITEM_QUANTITY_LIMIT`;
+        a new item when the Cart already holds 50 → `422 CART_ITEM_LIMIT` (Decision AV2). The resolved price is kept as
+        the price last seen. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCartItemRequest' }
+      responses:
+        '200':
+          description: The Cart after the item was added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/BranchNotFound' }
+        '422': { $ref: '#/components/responses/CartItemRejected' }
+  /carts:
+    get:
+      tags: [Cart]
+      operationId: listCarts
+      summary: The caller's ACTIVE Carts at every Branch
+      description: |
+        For the cart badge: `itemCount` is the sum of quantities; most recently updated first; no prices (Decision AV3).
+      responses:
+        '200':
+          description: The Carts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CartSummaryList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 components:
   securitySchemes:
     accessCookie:
@@ -339,6 +412,17 @@ components:
       required: false
       description: Value of the `hy_c_csrf` cookie (the Customer one, Decision AP1); missing or wrong → `403 CSRF_INVALID`.
       schema: { type: string, maxLength: 512 }
+    BranchIdPath:
+      name: branchId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AtQuery:
+      name: at
+      in: query
+      required: false
+      description: The planned pickup time (ISO instant, default now), for the selling hours; malformed → `400`.
+      schema: { type: string, format: date-time }
   headers:
     ETag:
       description: '`"v{version}"` of the resource (API README §8).'
@@ -347,6 +431,18 @@ components:
       description: Auth cookies (API 01-security §3).
       schema: { type: string }
   responses:
+    BranchNotFound:
+      description: '`BRANCH_NOT_FOUND` (Decision W6)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CartItemRejected:
+      description: |
+        `CART_ITEM_INVALID` with `issues[]` (the resolver's), `CART_ITEM_QUANTITY_LIMIT` or `CART_ITEM_LIMIT`
+        (Decision AV2)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/CartItemProblem' }
     SessionNotFound:
       description: '`SESSION_NOT_FOUND` (Decision AT2)'
       content:
@@ -528,3 +624,99 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/DeviceSession' }
+    MoneyVnd:
+      $ref: './components/common.yaml#/components/schemas/MoneyVnd'
+    CartIssueCode:
+      type: string
+      enum: [PRODUCT_NOT_FOUND, PRODUCT_SOLD_OUT, PRODUCT_PAUSED, OUTSIDE_SELLING_HOURS, VARIANT_SOLD_OUT,
+        VARIANT_NOT_AVAILABLE, OPTION_ITEM_SOLD_OUT, OPTION_SELECTION_INVALID, REQUIRED_OPTION_GROUP_UNSATISFIABLE]
+      description: The Catalog resolver's issues (Catalog §5.8, Decision AJ2, AK4).
+    CartIssueSeverity:
+      type: string
+      enum: [BLOCKING]
+    CartIssue:
+      type: object
+      required: [code, severity]
+      properties:
+        code: { $ref: '#/components/schemas/CartIssueCode' }
+        severity: { $ref: '#/components/schemas/CartIssueSeverity' }
+        optionItemId: { type: [string, 'null'], format: uuid }
+        optionGroupId: { type: [string, 'null'], format: uuid }
+    CartItemOption:
+      type: object
+      required: [optionItemId, optionGroupName, optionItemName, extraPrice]
+      properties:
+        optionItemId: { type: string, format: uuid }
+        optionGroupName: { type: [string, 'null'], description: '`null` when no longer on offer.' }
+        optionItemName: { type: [string, 'null'] }
+        extraPrice: { type: [integer, 'null'], format: int64 }
+    CartItem:
+      type: object
+      required: [cartItemId, productId, productName, variantId, variantName, options, note, quantity, unitPrice,
+        lineTotal, issues]
+      properties:
+        cartItemId: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        productName: { type: [string, 'null'] }
+        variantId: { type: string, format: uuid }
+        variantName: { type: [string, 'null'] }
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/CartItemOption' }
+        note: { type: [string, 'null'] }
+        quantity: { type: integer }
+        unitPrice: { type: [integer, 'null'], format: int64, description: Provisional; `null` when unknown. }
+        lineTotal: { type: [integer, 'null'], format: int64 }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/CartIssue' }
+    Cart:
+      type: object
+      required: [cartId, branchId, version, items, couponCode, provisionalSubtotal, hasBlockingIssues, updatedAt]
+      properties:
+        cartId: { type: [string, 'null'], format: uuid, description: '`null` while the Customer has no Cart here.' }
+        branchId: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+        couponCode: { type: [string, 'null'] }
+        provisionalSubtotal: { $ref: '#/components/schemas/MoneyVnd' }
+        hasBlockingIssues: { type: boolean }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    AddCartItemRequest:
+      type: object
+      required: [productId, variantId, quantity]
+      properties:
+        productId: { type: string, format: uuid }
+        variantId: { type: string, format: uuid }
+        optionItemIds:
+          type: array
+          maxItems: 20
+          items: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+        note: { type: [string, 'null'], maxLength: 1024, description: 'At most 255 characters once normalized.' }
+        at: { type: [string, 'null'], format: date-time, description: The planned pickup time (default now). }
+    CartItemProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          properties:
+            issues:
+              type: array
+              items: { $ref: '#/components/schemas/CartIssue' }
+    CartSummary:
+      type: object
+      required: [cartId, branchId, itemCount, updatedAt]
+      properties:
+        cartId: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        itemCount: { type: integer }
+        updatedAt: { type: string, format: date-time }
+    CartSummaryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartSummary' }
