@@ -117,6 +117,66 @@ public class Cart {
 		return item;
 	}
 
+	/**
+	 * Changes an item to {@code selection} and {@code quantity} (Decision AW1). When it becomes equivalent to another
+	 * item, that one gets the quantity and the edited one is removed.
+	 * @return the item that remains, and whether the edited one merged into it
+	 * @throws DomainException {@code CART_ITEM_NOT_FOUND}, {@code CART_ITEM_QUANTITY_LIMIT}
+	 */
+	public Edited edit(UUID itemId, CartSelection selection, int quantity, Long unitPrice, Instant now) {
+		CartItem item = item(itemId);
+		if (quantity > MAX_QUANTITY) {
+			throw new DomainException(CartErrorCode.CART_ITEM_QUANTITY_LIMIT,
+					"Cart " + this.id + " item " + itemId + " would exceed " + MAX_QUANTITY);
+		}
+		String key = selection.equivalenceKey();
+		CartItem other = this.items.stream()
+			.filter(candidate -> candidate != item && candidate.getEquivalenceKey().equals(key))
+			.findFirst()
+			.orElse(null);
+		this.updatedAt = now;
+		if (other == null) {
+			item.change(selection, quantity, unitPrice, now);
+			return new Edited(item.getId(), false);
+		}
+		if (other.getQuantity() + quantity > MAX_QUANTITY) {
+			throw new DomainException(CartErrorCode.CART_ITEM_QUANTITY_LIMIT,
+					"Cart " + this.id + " item " + other.getId() + " would exceed " + MAX_QUANTITY);
+		}
+		other.increase(quantity, unitPrice, now);
+		this.items.remove(item);
+		return new Edited(other.getId(), true);
+	}
+
+	/** @throws DomainException {@code CART_ITEM_NOT_FOUND} (Decision AW3) */
+	public void remove(UUID itemId, Instant now) {
+		this.items.remove(item(itemId));
+		this.updatedAt = now;
+	}
+
+	/** Removes every item; the Cart stays {@code ACTIVE} and keeps its coupon (Decision AW3). */
+	public void clear(Instant now) {
+		this.items.clear();
+		this.updatedAt = now;
+	}
+
+	/** @throws DomainException {@code CART_ITEM_NOT_FOUND} unless the item is in this Cart */
+	public CartItem item(UUID itemId) {
+		return this.items.stream()
+			.filter(candidate -> candidate.getId().equals(itemId))
+			.findFirst()
+			.orElseThrow(() -> notFound(itemId));
+	}
+
+	/** {@code CART_ITEM_NOT_FOUND}: the item is not in the caller's Cart (Decision AW3). */
+	public static DomainException notFound(UUID itemId) {
+		return new DomainException(CartErrorCode.CART_ITEM_NOT_FOUND, "Cart item " + itemId + " is not in the Cart");
+	}
+
+	/** The outcome of {@link #edit}: {@code cartItemId} is the item that remains. */
+	public record Edited(UUID cartItemId, boolean merged) {
+	}
+
 	public UUID getId() {
 		return this.id;
 	}

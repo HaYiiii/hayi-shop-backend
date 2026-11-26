@@ -1,6 +1,9 @@
 package vn.hayi.shop.platform.web;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -106,6 +109,77 @@ public final class MergePatch {
 		else {
 			return Change.set(value.intValue());
 		}
+		return Change.keep();
+	}
+
+	/** Like {@link #requiredInt(String)} within {@code [min, max]} (violation {@code OUT_OF_RANGE}). */
+	public Change<Integer> requiredInt(String key, int min, int max) {
+		Change<Integer> change = requiredInt(key);
+		if (change instanceof Change.Set<Integer>(Integer value) && (value < min || value > max)) {
+			reject(key, "OUT_OF_RANGE");
+			return Change.keep();
+		}
+		return change;
+	}
+
+	/** A UUID field that cannot be cleared. */
+	public Change<UUID> requiredUuid(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		UUID uuid = uuid(value);
+		if (uuid == null) {
+			reject(key, value.isNull() ? "NOT_BLANK" : "INVALID_TYPE");
+			return Change.keep();
+		}
+		return Change.set(uuid);
+	}
+
+	/** A list of UUIDs replaced as a whole, which cannot be {@code null}; at most {@code maxItems} (violation {@code SIZE}). */
+	public Change<List<UUID>> requiredUuidList(String key, int maxItems) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (!value.isArray()) {
+			reject(key, value.isNull() ? "NOT_BLANK" : "INVALID_TYPE");
+			return Change.keep();
+		}
+		if (value.size() > maxItems) {
+			reject(key, "SIZE");
+			return Change.keep();
+		}
+		List<UUID> ids = new ArrayList<>();
+		for (JsonNode element : value) {
+			UUID uuid = uuid(element);
+			if (uuid == null) {
+				reject(key, "INVALID_TYPE");
+				return Change.keep();
+			}
+			ids.add(uuid);
+		}
+		return Change.set(List.copyOf(ids));
+	}
+
+	/** An ISO instant that {@code null} clears (violation {@code INVALID_TYPE} when malformed). */
+	public Change<Instant> optionalInstant(String key) {
+		JsonNode value = read(key);
+		if (value == null) {
+			return Change.keep();
+		}
+		if (value.isNull()) {
+			return Change.set(null);
+		}
+		if (value.isString()) {
+			try {
+				return Change.set(OffsetDateTime.parse(value.stringValue()).toInstant());
+			}
+			catch (DateTimeParseException ex) {
+				// falls through to the violation below
+			}
+		}
+		reject(key, "INVALID_TYPE");
 		return Change.keep();
 	}
 
@@ -247,6 +321,18 @@ public final class MergePatch {
 			return Change.set(text);
 		}
 		return Change.keep();
+	}
+
+	private static UUID uuid(JsonNode value) {
+		if (!value.isString()) {
+			return null;
+		}
+		try {
+			return UUID.fromString(value.stringValue());
+		}
+		catch (IllegalArgumentException ex) {
+			return null;
+		}
 	}
 
 	private JsonNode read(String key) {

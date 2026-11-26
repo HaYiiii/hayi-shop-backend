@@ -41,6 +41,40 @@ class CartTest {
 	}
 
 	@Test
+	void anEditChangesTheItemUnlessItMatchesAnotherOneWhichThenTakesTheQuantity() {
+		Cart cart = Cart.open(UuidV7.generate(), UuidV7.generate(), NOW);
+		CartItem plain = cart.add(selection(List.of(), null), 2, 50000L, NOW);
+		CartItem withMilk = cart.add(selection(List.of(this.milk), null), 1, 60000L, NOW);
+
+		Cart.Edited changed = cart.edit(withMilk.getId(), selection(List.of(this.sugar), "nóng"), 3, 55000L, NOW);
+		assertThat(changed).isEqualTo(new Cart.Edited(withMilk.getId(), false));
+		assertThat(withMilk.getOptions()).containsExactly(this.sugar);
+		assertThat(withMilk.getNote()).isEqualTo("nóng");
+		assertThat(withMilk.getQuantity()).isEqualTo(3);
+
+		Cart.Edited merged = cart.edit(withMilk.getId(), selection(List.of(), null), 4, 50000L, NOW.plusSeconds(1));
+		assertThat(merged).isEqualTo(new Cart.Edited(plain.getId(), true));
+		assertThat(cart.getItems()).containsExactly(plain);
+		assertThat(plain.getQuantity()).isEqualTo(6);
+		assertThat(cart.getUpdatedAt()).isEqualTo(NOW.plusSeconds(1));
+	}
+
+	@Test
+	void aMergeAboveTheLimitOrAnUnknownItemChangesNothing() {
+		Cart cart = Cart.open(UuidV7.generate(), UuidV7.generate(), NOW);
+		CartItem plain = cart.add(selection(List.of(), null), 90, 50000L, NOW);
+		CartItem withMilk = cart.add(selection(List.of(this.milk), null), 10, 60000L, NOW);
+
+		assertThatThrownBy(() -> cart.edit(withMilk.getId(), selection(List.of(), null), 10, 50000L, NOW))
+			.isInstanceOfSatisfying(DomainException.class,
+					ex -> assertThat(ex.code()).isEqualTo(CartErrorCode.CART_ITEM_QUANTITY_LIMIT));
+		assertThatThrownBy(() -> cart.remove(UuidV7.generate(), NOW)).isInstanceOfSatisfying(DomainException.class,
+				ex -> assertThat(ex.code()).isEqualTo(CartErrorCode.CART_ITEM_NOT_FOUND));
+		assertThat(cart.getItems()).containsExactly(plain, withMilk);
+		assertThat(plain.getQuantity()).isEqualTo(90);
+	}
+
+	@Test
 	void aDifferentNoteOrOptionIsAnotherItem() {
 		Cart cart = Cart.open(UuidV7.generate(), UuidV7.generate(), NOW);
 

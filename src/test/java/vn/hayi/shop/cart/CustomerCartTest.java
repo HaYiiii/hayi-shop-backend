@@ -7,7 +7,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import java.time.Duration;
@@ -94,6 +96,9 @@ class CustomerCartTest {
 	final Map<UUID, Long> products = new ConcurrentHashMap<>();
 
 	final Map<UUID, UUID> variants = new ConcurrentHashMap<>();
+
+	/** Other sizes: variant → (product, extra over the default size). */
+	final Map<UUID, Map.Entry<UUID, Long>> sizes = new ConcurrentHashMap<>();
 
 	final Map<UUID, Long> options = new ConcurrentHashMap<>();
 
@@ -346,12 +351,256 @@ class CustomerCartTest {
 		assertThat(JsonPath.<List<Integer>>read(body, "$.items[*].itemCount")).containsExactly(4, 3);
 	}
 
+	// --- editing (Decision AW) -----------------------------------------------------------------------------------
+
+	@Test
+	void theQuantityAndNoteOfAnItemChangeAndAMissingKeyKeepsItsValue() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 1, "ít đá", this.oat))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+
+		MockHttpServletResponse edited = this.ha.perform(edit(itemId, "{\"quantity\": 3}"));
+
+		assertThat(edited.getStatus()).as(edited.getContentAsString()).isEqualTo(200);
+		String body = edited.getContentAsString();
+		assertThat(JsonPath.<String>read(body, "$.cartItemId")).isEqualTo(itemId);
+		assertThat(JsonPath.<Boolean>read(body, "$.merged")).isFalse();
+		assertThat(JsonPath.<Integer>read(body, "$.cart.version")).isEqualTo(2);
+		assertThat(JsonPath.<Integer>read(body, "$.cart.items[0].quantity")).isEqualTo(3);
+		assertThat(JsonPath.<String>read(body, "$.cart.items[0].note")).as("kept").isEqualTo("ít đá");
+		assertThat(JsonPath.<List<String>>read(body, "$.cart.items[0].options[*].optionItemId")).as("kept")
+			.containsExactly(this.oat.toString());
+
+		String cleared = this.ha.perform(edit(itemId, "{\"note\": null}")).getContentAsString();
+		assertThat(cleared).contains("\"note\":null");
+		assertThat(JsonPath.<Integer>read(cleared, "$.cart.items[0].quantity")).isEqualTo(3);
+	}
+
+	@Test
+	void aNewSizeAndOptionsArePricedNowAndThePriceSeenIsKept() throws Exception {
+		UUID large = size(this.latte, 15000);
+		String cart = this.ha.perform(add(item(this.latte, 2, null, this.oat))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+
+		String body = this.ha
+			.perform(edit(itemId, "{\"variantId\": \"%s\", \"optionItemIds\": [\"%s\"]}".formatted(large, this.syrup)))
+			.getContentAsString();
+
+		assertThat(JsonPath.<String>read(body, "$.cart.items[0].variantId")).isEqualTo(large.toString());
+		assertThat(JsonPath.<List<String>>read(body, "$.cart.items[0].options[*].optionItemId"))
+			.containsExactly(this.syrup.toString());
+		assertThat(JsonPath.<Integer>read(body, "$.cart.items[0].unitPrice")).isEqualTo(50000 + 15000 + 5000);
+		assertThat(this.jdbc.sql("SELECT last_seen_unit_price FROM crt_cart_item WHERE id = ?")
+			.param(UuidBinary.toBytes(UUID.fromString(itemId)))
+			.query(Long.class)
+			.single()).isEqualTo(70000L);
+	}
+
+	@Test
+	void anEditThatMatchesAnotherItemMergesIntoIt() throws Exception {
+		UUID large = size(this.latte, 15000);
+		this.ha.perform(add(item(this.latte, 2, null, this.oat)));
+		String cart = this.ha.perform(add(itemOfSize(this.latte, large, 1, null, this.oat))).getContentAsString();
+		String regular = JsonPath.read(cart, "$.items[0].cartItemId");
+		String largeItem = JsonPath.read(cart, "$.items[1].cartItemId");
+
+		MockHttpServletResponse merged = this.ha.perform(edit(largeItem,
+				"{\"variantId\": \"%s\", \"quantity\": 4}".formatted(this.variants.get(this.latte))));
+
+		assertThat(merged.getStatus()).as(merged.getContentAsString()).isEqualTo(200);
+		String body = merged.getContentAsString();
+		assertThat(JsonPath.<String>read(body, "$.cartItemId")).as("the item that remains").isEqualTo(regular);
+		assertThat(JsonPath.<Boolean>read(body, "$.merged")).isTrue();
+		assertThat(JsonPath.<List<String>>read(body, "$.cart.items[*].cartItemId")).containsExactly(regular);
+		assertThat(JsonPath.<List<Integer>>read(body, "$.cart.items[*].quantity")).containsExactly(6);
+		assertThat(itemRows(this.ha, "crt_cart_item")).isEqualTo(1L);
+	}
+
+	@Test
+	void aMergeAboveNinetyNineIsRefusedAndNothingChanges() throws Exception {
+		UUID large = size(this.latte, 15000);
+		this.ha.perform(add(item(this.latte, 90, null)));
+		String cart = this.ha.perform(add(itemOfSize(this.latte, large, 10, null))).getContentAsString();
+		String largeItem = JsonPath.read(cart, "$.items[1].cartItemId");
+
+		assertProblem(this.ha.perform(edit(largeItem, "{\"variantId\": \"%s\"}".formatted(this.variants.get(this.latte)))),
+				422, "CART_ITEM_QUANTITY_LIMIT");
+
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(after, "$.items[*].quantity")).containsExactly(90, 10);
+		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(2);
+	}
+
+	@Test
+	void anEditToAnInvalidChoiceIsRefusedWithItsIssuesAndTheItemStays() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 1, null))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+		this.soldOut.add(this.oat);
+
+		MockHttpServletResponse refused = this.ha
+			.perform(edit(itemId, "{\"optionItemIds\": [\"%s\"], \"quantity\": 2}".formatted(this.oat)));
+
+		assertProblem(refused, 422, "CART_ITEM_INVALID");
+		assertThat(JsonPath.<List<String>>read(refused.getContentAsString(), "$.issues[*].code"))
+			.containsExactly("OPTION_ITEM_SOLD_OUT");
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<?>>read(after, "$.items[0].options")).isEmpty();
+		assertThat(JsonPath.<Integer>read(after, "$.items[0].quantity")).isEqualTo(1);
+		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(1);
+	}
+
+	@Test
+	void theEditIsBoundedAndNeedsTheCsrfToken() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 1, null))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+
+		assertProblem(this.ha.perform(edit(itemId, "{\"quantity\": 0}")), 400, "VALIDATION_FAILED");
+		assertProblem(this.ha.perform(edit(itemId, "{\"quantity\": 100}")), 400, "VALIDATION_FAILED");
+		assertProblem(this.ha.perform(edit(itemId, "{\"quantity\": null}")), 400, "VALIDATION_FAILED");
+		assertProblem(this.ha.perform(edit(itemId, "{\"productId\": \"%s\"}".formatted(this.latte))), 400,
+				"VALIDATION_FAILED");
+		assertProblem(this.ha.perform(edit(itemId, "{\"note\": \"%s\"}".formatted("a".repeat(256)))), 400,
+				"VALIDATION_FAILED");
+		MockHttpServletResponse noCsrf = this.mvc
+			.perform(patch(cartPath() + "/items/" + itemId).contentType("application/merge-patch+json")
+				.content("{\"quantity\": 2}")
+				.cookie(new Cookie("hy_c_at", this.ha.access), new Cookie("hy_c_csrf", this.ha.csrf)))
+			.andReturn()
+			.getResponse();
+		assertProblem(noCsrf, 403, "CSRF_INVALID");
+		assertThat(JsonPath.<Integer>read(this.ha.perform(get(cartPath())).getContentAsString(), "$.version"))
+			.isEqualTo(1);
+	}
+
+	// --- removing (Decision AW3) ----------------------------------------------------------------------------------
+
+	@Test
+	void anItemIsRemoved() throws Exception {
+		this.ha.perform(add(item(this.latte, 1, null)));
+		String cart = this.ha.perform(add(item(this.latte, 2, "nóng"))).getContentAsString();
+		String first = JsonPath.read(cart, "$.items[0].cartItemId");
+
+		MockHttpServletResponse removed = this.ha.perform(delete(cartPath() + "/items/" + first));
+
+		assertThat(removed.getStatus()).as(removed.getContentAsString()).isEqualTo(200);
+		assertThat(JsonPath.<List<String>>read(removed.getContentAsString(), "$.items[*].note")).containsExactly("nóng");
+		assertThat(JsonPath.<Integer>read(removed.getContentAsString(), "$.version")).isEqualTo(3);
+		assertProblem(this.ha.perform(delete(cartPath() + "/items/" + first)), 404, "CART_ITEM_NOT_FOUND");
+	}
+
+	@Test
+	void clearingTheCartRemovesEveryItemAndKeepsItActive() throws Exception {
+		this.ha.perform(add(item(this.latte, 1, null, this.oat)));
+		String cart = this.ha.perform(add(item(this.latte, 2, "nóng"))).getContentAsString();
+		String cartId = JsonPath.read(cart, "$.cartId");
+
+		MockHttpServletResponse cleared = this.ha.perform(delete(cartPath()));
+
+		assertThat(cleared.getStatus()).as(cleared.getContentAsString()).isEqualTo(200);
+		assertThat(JsonPath.<String>read(cleared.getContentAsString(), "$.cartId")).isEqualTo(cartId);
+		assertThat(JsonPath.<List<?>>read(cleared.getContentAsString(), "$.items")).isEmpty();
+		assertThat(JsonPath.<Integer>read(cleared.getContentAsString(), "$.version")).isEqualTo(3);
+		assertThat(cartRows(this.ha)).isEqualTo(1);
+		assertThat(itemRows(this.ha, "crt_cart_item")).isZero();
+		assertThat(itemRows(this.ha, "crt_cart_item_option")).isZero();
+	}
+
+	@Test
+	void clearingWithoutACartCreatesNothing() throws Exception {
+		MockHttpServletResponse cleared = this.ha.perform(delete(cartPath()));
+
+		assertThat(cleared.getStatus()).as(cleared.getContentAsString()).isEqualTo(200);
+		assertThat(cleared.getContentAsString()).contains("\"cartId\":null");
+		assertThat(cartRows(this.ha)).isZero();
+		this.inactiveBranches.add(this.branch);
+		assertProblem(this.ha.perform(delete(cartPath())), 404, "BRANCH_NOT_FOUND");
+	}
+
+	@Test
+	void anItemOfAnotherCustomersCartIsNotFound() throws Exception {
+		Customer other = customer("Minh");
+		String theirs = other.perform(add(item(this.latte, 1, null))).getContentAsString();
+		String theirItem = JsonPath.read(theirs, "$.items[0].cartItemId");
+		this.ha.perform(add(item(this.latte, 1, null)));
+
+		assertProblem(this.ha.perform(edit(theirItem, "{\"quantity\": 5}")), 404, "CART_ITEM_NOT_FOUND");
+		assertProblem(this.ha.perform(delete(cartPath() + "/items/" + theirItem)), 404, "CART_ITEM_NOT_FOUND");
+		assertProblem(this.ha.perform(edit(UuidV7.generate().toString(), "{\"quantity\": 5}")), 404,
+				"CART_ITEM_NOT_FOUND");
+		assertThat(JsonPath.<List<Integer>>read(other.perform(get(cartPath())).getContentAsString(),
+				"$.items[*].quantity")).containsExactly(1);
+	}
+
+	// --- If-Match (Decision AW2) ----------------------------------------------------------------------------------
+
+	@Test
+	void aStaleIfMatchIsRefusedAndTheCurrentOneApplies() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 1, null))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+		this.ha.perform(add(item(this.latte, 1, "nóng")));
+
+		assertProblem(this.ha.perform(edit(itemId, "{\"quantity\": 5}").header("If-Match", "\"v1\"")), 412,
+				"VERSION_CONFLICT");
+		assertProblem(this.ha.perform(delete(cartPath() + "/items/" + itemId).header("If-Match", "\"v1\"")), 412,
+				"VERSION_CONFLICT");
+		assertProblem(this.ha.perform(delete(cartPath()).header("If-Match", "\"v1\"")), 412, "VERSION_CONFLICT");
+		String unchanged = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(unchanged, "$.items[*].quantity")).containsExactly(1, 1);
+		assertThat(JsonPath.<Integer>read(unchanged, "$.version")).isEqualTo(2);
+
+		MockHttpServletResponse current = this.ha.perform(edit(itemId, "{\"quantity\": 5}").header("If-Match", "\"v2\""));
+		assertThat(current.getStatus()).as(current.getContentAsString()).isEqualTo(200);
+		assertThat(JsonPath.<Integer>read(current.getContentAsString(), "$.cart.version")).isEqualTo(3);
+		assertThat(this.ha.perform(delete(cartPath()).header("If-Match", "\"v3\"")).getStatus()).isEqualTo(200);
+	}
+
+	@Test
+	void concurrentEditsOfOneItemRunOneAfterTheOther() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 1, null))).getContentAsString();
+		String itemId = JsonPath.read(cart, "$.items[0].cartItemId");
+
+		List<MockHttpServletResponse> responses = concurrently(8,
+				i -> edit(itemId, "{\"quantity\": %d}".formatted(i + 2)).header("If-Match", "\"v1\""));
+
+		long won = responses.stream().filter(response -> response.getStatus() == 200).count();
+		assertThat(won).as("one edit based on v1 wins, the others are stale").isEqualTo(1);
+		assertThat(responses.stream().filter(response -> response.getStatus() == 412).count()).isEqualTo(7);
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(2);
+	}
+
+	@Test
+	void concurrentMergesIntoOneItemLoseNoQuantity() throws Exception {
+		UUID large = size(this.latte, 15000);
+		this.ha.perform(add(item(this.latte, 1, null)));
+		List<String> notes = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			notes.add("ghi chú " + i);
+			this.ha.perform(add(itemOfSize(this.latte, large, 1, notes.get(i))));
+		}
+		List<String> ids = JsonPath.read(this.ha.perform(get(cartPath())).getContentAsString(), "$.items[*].cartItemId");
+
+		List<MockHttpServletResponse> responses = concurrently(6, i -> edit(ids.get(i + 1),
+				"{\"variantId\": \"%s\", \"note\": null}".formatted(this.variants.get(this.latte))));
+
+		assertAllOk(responses);
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(after, "$.items[*].quantity")).containsExactly(7);
+		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(7 + 6);
+	}
+
 	// --- the fake menu --------------------------------------------------------------------------------------------
 
 	private UUID product(long price) {
 		UUID id = UuidV7.generate();
 		this.products.put(id, price);
 		this.variants.put(id, UuidV7.generate());
+		return id;
+	}
+
+	/** Another size of the product, {@code extra} dearer than its default one. */
+	private UUID size(UUID productId, long extra) {
+		UUID id = UuidV7.generate();
+		this.sizes.put(id, Map.entry(productId, extra));
 		return id;
 	}
 
@@ -370,7 +619,11 @@ class CustomerCartTest {
 
 	private ResolvedLine resolve(SelectionRequest line) {
 		Long base = this.products.get(line.productId());
-		if (base == null || !this.variants.get(line.productId()).equals(line.variantId())) {
+		Map.Entry<UUID, Long> size = this.sizes.get(line.variantId());
+		if (base != null && size != null && size.getKey().equals(line.productId())) {
+			base += size.getValue();
+		}
+		else if (base == null || !this.variants.get(line.productId()).equals(line.variantId())) {
 			return new ResolvedLine(line.ref(), false, line.productId(), line.variantId(), List.of(), null, null, null,
 					null, Map.of(), List.of(new Issue(IssueCode.PRODUCT_NOT_FOUND, null, null)), null, null, List.of());
 		}
@@ -425,12 +678,20 @@ class CustomerCartTest {
 		return post(cartPath() + "/items").contentType(MediaType.APPLICATION_JSON).content(json);
 	}
 
+	private MockHttpServletRequestBuilder edit(String cartItemId, String json) {
+		return patch(cartPath() + "/items/" + cartItemId).contentType("application/merge-patch+json").content(json);
+	}
+
 	private String item(UUID productId, int quantity, String note, UUID... optionItemIds) {
+		return itemOfSize(productId, this.variants.getOrDefault(productId, UuidV7.generate()), quantity, note,
+				optionItemIds);
+	}
+
+	private String itemOfSize(UUID productId, UUID variant, int quantity, String note, UUID... optionItemIds) {
 		StringBuilder ids = new StringBuilder();
 		for (int i = 0; i < optionItemIds.length; i++) {
 			ids.append((i > 0) ? ", " : "").append('"').append(optionItemIds[i]).append('"');
 		}
-		UUID variant = this.variants.getOrDefault(productId, UuidV7.generate());
 		return "{\"productId\": \"%s\", \"variantId\": \"%s\", \"optionItemIds\": [%s], \"quantity\": %d, \"note\": %s}"
 			.formatted(productId, variant, ids, quantity, (note != null) ? "\"" + note + "\"" : "null");
 	}
@@ -472,6 +733,17 @@ class CustomerCartTest {
 			.param(UuidBinary.toBytes(customer.customerId))
 			.query(Long.class)
 			.single();
+	}
+
+	/** Rows of {@code crt_cart_item} or {@code crt_cart_item_option} in the Customer's Carts. */
+	private long itemRows(Customer customer, String table) {
+		String sql = "crt_cart_item".equals(table) ? """
+				SELECT COUNT(*) FROM crt_cart_item i JOIN crt_cart c ON c.id = i.cart_id WHERE c.customer_id = ?
+				""" : """
+				SELECT COUNT(*) FROM crt_cart_item_option o JOIN crt_cart_item i ON i.id = o.cart_item_id
+				JOIN crt_cart c ON c.id = i.cart_id WHERE c.customer_id = ?
+				""";
+		return this.jdbc.sql(sql).param(UuidBinary.toBytes(customer.customerId)).query(Long.class).single();
 	}
 
 	private static void assertProblem(MockHttpServletResponse response, int status, String code) throws Exception {

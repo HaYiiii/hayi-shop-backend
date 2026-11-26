@@ -343,6 +343,88 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/BranchNotFound' }
+    delete:
+      tags: [Cart]
+      operationId: clearCart
+      summary: Remove every item from the caller's Cart at a Branch
+      description: |
+        Removes every item; the Cart stays `ACTIVE` and keeps its coupon. No Cart yet → the empty Cart, nothing is
+        created (Decision AW3). `If-Match: "v{version}"` of the Cart is optional: stale → `412 VERSION_CONFLICT`,
+        nothing changes (AW2). Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Cart after it was cleared.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/BranchNotFound' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+  /branches/{branchId}/cart/items/{cartItemId}:
+    parameters:
+      - $ref: '#/components/parameters/BranchIdPath'
+      - name: cartItemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Cart]
+      operationId: updateCartItem
+      summary: Change an item of the caller's Cart
+      description: |
+        JSON Merge Patch on `quantity` (1..99), `variantId`, `optionItemIds` (≤ 20, replaced as a whole) and `note`
+        (`null` or blank removes it, at most 255 characters once normalized); a missing key keeps the value; `at` is
+        the planned pickup time the item is resolved at (default now); any other key → `400`. The item after the edit
+        is resolved again: any issue → `422 CART_ITEM_INVALID` with `issues[]` and the item is unchanged. When it
+        becomes equivalent to another item, the two merge: the other item gets the quantity (a total above 99 →
+        `422 CART_ITEM_QUANTITY_LIMIT`, nothing changes) and the edited one is removed; `cartItemId` names the item
+        that remains (Decision AW1). An item that is not in the caller's Cart → `404 CART_ITEM_NOT_FOUND` (AW3).
+        `If-Match: "v{version}"` of the Cart is optional: stale → `412 VERSION_CONFLICT` (AW2). Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/CartItemPatch' }
+      responses:
+        '200':
+          description: The Cart after the edit, with the item that remains.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CartItemEdit' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/CartItemNotFound' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/CartItemRejected' }
+    delete:
+      tags: [Cart]
+      operationId: removeCartItem
+      summary: Remove an item from the caller's Cart
+      description: |
+        An item that is not in the caller's Cart → `404 CART_ITEM_NOT_FOUND` (Decision AW3). `If-Match: "v{version}"`
+        of the Cart is optional: stale → `412 VERSION_CONFLICT` (AW2). Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The Cart without the item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/CartItemNotFound' }
+        '412': { $ref: '#/components/responses/VersionConflict' }
   /branches/{branchId}/cart/items:
     parameters:
       - $ref: '#/components/parameters/BranchIdPath'
@@ -423,6 +505,12 @@ components:
       required: false
       description: The planned pickup time (ISO instant, default now), for the selling hours; malformed → `400`.
       schema: { type: string, format: date-time }
+    IfMatchOptional:
+      name: If-Match
+      in: header
+      required: false
+      description: '`"v{version}"` the change is based on (API README §8); stale → `412 VERSION_CONFLICT`.'
+      schema: { type: string, maxLength: 64 }
   headers:
     ETag:
       description: '`"v{version}"` of the resource (API README §8).'
@@ -443,6 +531,11 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/CartItemProblem' }
+    CartItemNotFound:
+      description: '`CART_ITEM_NOT_FOUND` (Decision AW3) or `BRANCH_NOT_FOUND` (Decision W6)'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     SessionNotFound:
       description: '`SESSION_NOT_FOUND` (Decision AT2)'
       content:
@@ -697,6 +790,28 @@ components:
         quantity: { type: integer, minimum: 1, maximum: 99 }
         note: { type: [string, 'null'], maxLength: 1024, description: 'At most 255 characters once normalized.' }
         at: { type: [string, 'null'], format: date-time, description: The planned pickup time (default now). }
+    CartItemPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        JSON Merge Patch of a Cart item: a missing key keeps the value; `note: null` removes the note; `quantity`,
+        `variantId` and `optionItemIds` cannot be `null`. `at` is not stored: the item is resolved at it.
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+        variantId: { type: string, format: uuid }
+        optionItemIds:
+          type: array
+          maxItems: 20
+          items: { type: string, format: uuid }
+        note: { type: [string, 'null'], maxLength: 1024, description: 'At most 255 characters once normalized.' }
+        at: { type: [string, 'null'], format: date-time, description: The planned pickup time (default now). }
+    CartItemEdit:
+      type: object
+      required: [cart, cartItemId, merged]
+      properties:
+        cart: { $ref: '#/components/schemas/Cart' }
+        cartItemId: { type: string, format: uuid, description: The item that remains after the edit. }
+        merged: { type: boolean, description: The edited item was merged into another one and is gone. }
     CartItemProblem:
       allOf:
         - $ref: '#/components/schemas/Problem'

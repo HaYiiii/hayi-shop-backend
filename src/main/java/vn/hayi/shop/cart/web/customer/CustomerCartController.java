@@ -9,10 +9,16 @@ import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import tools.jackson.databind.JsonNode;
 import vn.hayi.shop.cart.application.CartService;
 import vn.hayi.shop.cart.application.CartView;
 import vn.hayi.shop.platform.security.AuthenticatedSession;
 import vn.hayi.shop.platform.web.InvalidFieldsException;
+import vn.hayi.shop.platform.web.MergePatch;
+import vn.hayi.shop.platform.web.VersionTags;
+import vn.hayi.shop.platform.web.spec.customer.model.CartItemEditDto;
+import vn.hayi.shop.shared.concurrency.ExpectedVersion;
+import vn.hayi.shop.shared.patch.Change;
 import vn.hayi.shop.platform.web.spec.customer.api.CartApi;
 import vn.hayi.shop.platform.web.spec.customer.model.AddCartItemRequestDto;
 import vn.hayi.shop.platform.web.spec.customer.model.CartDto;
@@ -30,6 +36,12 @@ import vn.hayi.shop.platform.web.spec.customer.model.CartSummaryListDto;
  */
 @RestController
 class CustomerCartController implements CartApi {
+
+	/** As {@code AddCartItemRequest} in the contract. */
+	private static final int MAX_OPTION_ITEMS = 20;
+
+	/** Longest note accepted before normalizing, as {@code AddCartItemRequest}. */
+	private static final int MAX_NOTE_INPUT = 1024;
 
 	private final CartService carts;
 
@@ -55,6 +67,45 @@ class CustomerCartController implements CartApi {
 		// A second read after the add committed: it shows the whole Cart priced now, and may already hold a concurrent
 		// add to the same Cart (its version then says so).
 		return ResponseEntity.ok(toDto(this.carts.view(userId, branchId, at)));
+	}
+
+	@Override
+	public ResponseEntity<CartItemEditDto> updateCartItem(UUID branchId, UUID cartItemId, JsonNode body,
+			String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		MergePatch patch = MergePatch.of(body);
+		Change<Integer> quantity = patch.requiredInt("quantity", 1, CartService.MAX_QUANTITY);
+		Change<UUID> variantId = patch.requiredUuid("variantId");
+		Change<List<UUID>> optionItemIds = patch.requiredUuidList("optionItemIds", MAX_OPTION_ITEMS);
+		Change<String> note = patch.optionalText("note", MAX_NOTE_INPUT).map(CartService::normalizeNote);
+		Instant at = patch.optionalInstant("at").applyTo(null);
+		patch.validate();
+		String normalized = note.applyTo(null);
+		if (normalized != null && normalized.length() > CartService.MAX_NOTE_LENGTH) {
+			throw new InvalidFieldsException(List.of(new InvalidFieldsException.Violation("note", "TOO_LONG")));
+		}
+		UUID userId = AuthenticatedSession.require().userId();
+		CartService.Edited edited = this.carts.edit(userId, branchId, cartItemId,
+				new CartService.ItemPatch(quantity, variantId, optionItemIds, note), expected, at);
+		return ResponseEntity.ok(new CartItemEditDto(toDto(this.carts.view(userId, branchId, at)),
+				edited.cartItemId(), edited.merged()));
+	}
+
+	@Override
+	public ResponseEntity<CartDto> removeCartItem(UUID branchId, UUID cartItemId, String ifMatch,
+			String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		UUID userId = AuthenticatedSession.require().userId();
+		this.carts.remove(userId, branchId, cartItemId, expected);
+		return ResponseEntity.ok(toDto(this.carts.view(userId, branchId, null)));
+	}
+
+	@Override
+	public ResponseEntity<CartDto> clearCart(UUID branchId, String ifMatch, String xCsrfToken) {
+		ExpectedVersion expected = VersionTags.optional(ifMatch);
+		UUID userId = AuthenticatedSession.require().userId();
+		this.carts.clear(userId, branchId, expected);
+		return ResponseEntity.ok(toDto(this.carts.view(userId, branchId, null)));
 	}
 
 	@Override

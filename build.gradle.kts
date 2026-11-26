@@ -102,6 +102,7 @@ val openApiGenerateTasks = openApiSurfaces.map { surface ->
 		// Merge Patch bodies (API README §3) must tell a missing key from null, which a generated DTO cannot.
 		schemaMappings = mapOf(
 			"BranchPatch" to "tools.jackson.databind.JsonNode",
+			"CartItemPatch" to "tools.jackson.databind.JsonNode",
 			"CategoryPatch" to "tools.jackson.databind.JsonNode",
 			"CollectionPatch" to "tools.jackson.databind.JsonNode",
 			"CustomerProfilePatch" to "tools.jackson.databind.JsonNode",
