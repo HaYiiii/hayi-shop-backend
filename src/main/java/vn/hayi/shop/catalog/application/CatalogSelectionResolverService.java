@@ -11,6 +11,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -32,6 +33,7 @@ import vn.hayi.shop.catalog.domain.OptionGroupRepository;
 import vn.hayi.shop.catalog.domain.Product;
 import vn.hayi.shop.catalog.domain.ProductOptionGroupConfig;
 import vn.hayi.shop.catalog.domain.ProductRepository;
+import vn.hayi.shop.catalog.domain.ProductVariant;
 import vn.hayi.shop.catalog.domain.SelectionResult;
 
 /**
@@ -90,7 +92,7 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 			BranchOffer offer = offers.get(line.productId());
 			SelectionResult result = (offer != null) ? offer.resolve(line.variantId(), line.optionItemIds())
 					: SelectionResult.notOnMenu();
-			return toLine(line, result);
+			return toLine(line, result, byId.get(line.productId()), offer);
 		}).toList();
 		return new ResolvedSelections(resolved, fingerprint(resolved));
 	}
@@ -107,11 +109,23 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 					.collect(Collectors.toMap(OptionGroup::getId, Function.identity()));
 	}
 
-	private static ResolvedLine toLine(SelectionRequest line, SelectionResult result) {
+	/**
+	 * @param product {@code null} when unknown
+	 * @param offer {@code null} when the Product is not on the Branch's menu
+	 */
+	private static ResolvedLine toLine(SelectionRequest line, SelectionResult result, Product product,
+			BranchOffer offer) {
 		Long unitPrice = result.unitPrice();
 		Map<UUID, Availability> options = new LinkedHashMap<>();
 		result.normalizedOptionItemIds()
 			.forEach(id -> options.put(id, availability(result.optionAvailability().get(id))));
+		String variantName = (product == null) ? null
+				: product.getVariants()
+					.stream()
+					.filter(variant -> variant.getId().equals(line.variantId()))
+					.map(ProductVariant::getName)
+					.findFirst()
+					.orElse(null);
 		return new ResolvedLine(line.ref(), result.valid(), line.productId(), line.variantId(),
 				result.normalizedOptionItemIds(), unitPrice, (unitPrice != null) ? unitPrice * line.quantity() : null,
 				availability(result.productAvailability()), availability(result.variantAvailability()), options,
@@ -119,7 +133,22 @@ class CatalogSelectionResolverService implements CatalogSelectionResolver {
 					.stream()
 					.map(issue -> new Issue(IssueCode.valueOf(issue.code().name()), issue.optionItemId(),
 							issue.optionGroupId()))
-					.toList());
+					.toList(),
+				(product != null) ? product.getName() : null, variantName,
+				chosenOptions(offer, result.normalizedOptionItemIds()));
+	}
+
+	/** The chosen items as offered, with their group and three-layer price (AI3), in normalized order. */
+	private static List<ResolvedOption> chosenOptions(BranchOffer offer, List<UUID> normalized) {
+		if (offer == null || normalized.isEmpty()) {
+			return List.of();
+		}
+		Map<UUID, ResolvedOption> offered = new HashMap<>();
+		offer.groups()
+			.forEach(group -> group.items()
+				.forEach(item -> offered.put(item.optionItemId(), new ResolvedOption(item.optionItemId(),
+						group.optionGroupId(), group.name(), item.name(), item.extraPrice()))));
+		return normalized.stream().map(offered::get).filter(Objects::nonNull).toList();
 	}
 
 	private static Availability availability(AvailabilityState state) {

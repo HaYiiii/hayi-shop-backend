@@ -553,6 +553,37 @@ class PublicMenuTest {
 		assertThat(line.valid()).isFalse();
 	}
 
+	@Test
+	void thePortNamesTheProductItsSizeAndTheChosenOptionsWithTheirPrices() throws Exception {
+		String category = category(null);
+		Product product = product(category, 10000, 15000);
+		list(product.id);
+		Group milk = group(0, "MULTIPLE", 2);
+		attach(product.id, milk.id);
+		UUID unknown = UuidV7.generate();
+
+		var resolved = this.resolver.resolve(UUID.fromString(this.branch),
+				List.of(new CatalogSelectionResolver.SelectionRequest("a", UUID.fromString(product.id),
+						UUID.fromString(product.variants.get(1)), List.of(UUID.fromString(milk.items.get(0))), 1),
+						new CatalogSelectionResolver.SelectionRequest("b", unknown, unknown, List.of(), 1)),
+				null);
+
+		var named = resolved.lines().getFirst();
+		assertThat(named.productName()).startsWith("Món ");
+		assertThat(named.variantName()).isEqualTo("S1");
+		assertThat(named.options()).singleElement().satisfies(option -> {
+			assertThat(option.optionItemId()).isEqualTo(UUID.fromString(milk.items.get(0)));
+			assertThat(option.optionGroupId()).isEqualTo(UUID.fromString(milk.id));
+			assertThat(option.optionGroupName()).isEqualTo("Nhóm");
+			assertThat(option.optionItemName()).isEqualTo("Item");
+			assertThat(option.extraPrice()).isZero();
+		});
+		var unnamed = resolved.lines().get(1);
+		assertThat(unnamed.productName()).isNull();
+		assertThat(unnamed.variantName()).isNull();
+		assertThat(unnamed.options()).isEmpty();
+	}
+
 	private static String line(String ref, String productId, String variantId, int quantity, String... items) {
 		StringBuilder ids = new StringBuilder();
 		for (int i = 0; i < items.length; i++) {

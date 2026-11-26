@@ -29,10 +29,18 @@ public interface CatalogSelectionResolver {
 	 * @param unitPrice {@code null} when the Product or Variant is unknown at the Branch (AJ3)
 	 * @param productAvailability {@code null} when the Product is not on the menu
 	 * @param variantAvailability {@code null} when the Variant is not offered
+	 * @param productName the Product's name, {@code null} when there is no such Product (for Cart, Decision AV1)
+	 * @param variantName the size's name, {@code null} when the Product has no such Variant
+	 * @param options the chosen items on offer, in {@code normalizedOptionItemIds} order, with their names and prices
 	 */
 	record ResolvedLine(String ref, boolean valid, UUID productId, UUID variantId, List<UUID> normalizedOptionItemIds,
 			Long unitPrice, Long lineTotal, Availability productAvailability, Availability variantAvailability,
-			Map<UUID, Availability> optionAvailability, List<Issue> issues) {
+			Map<UUID, Availability> optionAvailability, List<Issue> issues, String productName, String variantName,
+			List<ResolvedOption> options) {
+	}
+
+	record ResolvedOption(UUID optionItemId, UUID optionGroupId, String optionGroupName, String optionItemName,
+			long extraPrice) {
 	}
 
 	record Issue(IssueCode code, UUID optionItemId, UUID optionGroupId) {
