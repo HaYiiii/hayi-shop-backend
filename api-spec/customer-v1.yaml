@@ -15,6 +15,8 @@ tags:
     description: The signed-in Customer's own profile (API 07 §1, Customer §3.2)
   - name: Cart
     description: The signed-in Customer's server Cart per Branch (API 03 §1, Cart & Pricing §6, Decision AV)
+  - name: Checkout
+    description: Checkout preview of the Cart (API 03 §2, Decision AZ)
 security:
   - accessCookie: []
 paths:
@@ -471,6 +473,38 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CartSummaryList' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /branches/{branchId}/checkout/preview:
+    parameters:
+      - $ref: '#/components/parameters/BranchIdPath'
+    post:
+      tags: [Checkout]
+      operationId: previewCheckout
+      summary: Price the caller's Cart for a PICKUP order, without claiming anything
+      description: |
+        Recomputes everything from the Cart (Cart & Pricing §6.4–§6.7, Decision AZ); claims no slot and writes nothing.
+        S4 scope: PICKUP `SCHEDULED` only (`ASAP` → `FULFILLMENT_TYPE_NOT_AVAILABLE`); no coupon (`couponCode` set →
+        `400`), no promotion; `PAY_AT_STORE` only (`MANUAL_QR_TRANSFER` → `PAYMENT_METHOD_NOT_AVAILABLE`). Items are
+        resolved at the start of the chosen slot. `slotStart` that is not the start of a slot that day → `400`. Missing
+        `recipient` → the profile name and login phone. `pricingResult` is `BLOCKED` with any `BLOCKING` issue, else
+        `REQUIRES_ACKNOWLEDGMENT` with any `ACK_REQUIRED` issue, else `VALID`; `fingerprint` changes whenever the Cart,
+        the input or a price changes (AZ5). Branch unknown or not `ACTIVE` → `404`. Requires `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutPreviewRequest' }
+      responses:
+        '200':
+          description: The priced checkout.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutPricingResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/BranchNotFound' }
 components:
   securitySchemes:
     accessCookie:
@@ -719,6 +753,119 @@ components:
           items: { $ref: '#/components/schemas/DeviceSession' }
     MoneyVnd:
       $ref: './components/common.yaml#/components/schemas/MoneyVnd'
+    CheckoutPreviewRequest:
+      type: object
+      required: [fulfillment]
+      properties:
+        fulfillment:
+          type: object
+          required: [type, timing]
+          properties:
+            type: { type: string, enum: [PICKUP] }
+            timing: { type: string, enum: [SCHEDULED, ASAP] }
+            requestedDate: { type: [string, 'null'], format: date, description: Required for `SCHEDULED`. }
+            slotStart:
+              type: [string, 'null']
+              pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+              description: '`HH:mm`, the start of a slot that day; required for `SCHEDULED`.'
+        recipient:
+          type: [object, 'null']
+          required: [name, phone]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 128 }
+            phone: { type: string, minLength: 1, maxLength: 32, description: A Vietnamese phone. }
+        couponCode: { type: [string, 'null'], maxLength: 64, description: 'Not accepted until S11: any value → `400`.' }
+        paymentMethod: { type: string, enum: [PAY_AT_STORE, MANUAL_QR_TRANSFER], description: Default `PAY_AT_STORE`. }
+    CheckoutIssueCode:
+      type: string
+      enum: [PRODUCT_NOT_FOUND, PRODUCT_SOLD_OUT, PRODUCT_PAUSED, OUTSIDE_SELLING_HOURS, VARIANT_SOLD_OUT,
+        VARIANT_NOT_AVAILABLE, OPTION_ITEM_SOLD_OUT, OPTION_SELECTION_INVALID, REQUIRED_OPTION_GROUP_UNSATISFIABLE,
+        PRICE_INCREASED, PRICE_DECREASED, SLOT_FULL, SLOT_CUTOFF_PASSED, BRANCH_CLOSED_ON_DATE, BEYOND_ADVANCE_HORIZON,
+        FULFILLMENT_TYPE_NOT_AVAILABLE, PAYMENT_METHOD_NOT_AVAILABLE, CART_EMPTY]
+    CheckoutIssueSeverity:
+      type: string
+      enum: [BLOCKING, ACK_REQUIRED, INFO]
+    CheckoutIssue:
+      type: object
+      required: [code, severity]
+      properties:
+        code: { $ref: '#/components/schemas/CheckoutIssueCode' }
+        severity: { $ref: '#/components/schemas/CheckoutIssueSeverity' }
+        cartItemId: { type: [string, 'null'], format: uuid }
+    CheckoutLine:
+      type: object
+      required: [cartItemId, quantity, unitPrice, previousUnitPrice, priceChange, grossLineTotal,
+        productDiscountAmount, orderDiscountAllocated, netLineTotal, issues]
+      properties:
+        cartItemId: { type: string, format: uuid }
+        quantity: { type: integer }
+        unitPrice: { type: [integer, 'null'], format: int64, description: '`null` when the Product or size is unknown.' }
+        previousUnitPrice: { type: [integer, 'null'], format: int64, description: The price the Customer last saw. }
+        priceChange: { type: string, enum: [UNCHANGED, INCREASED, DECREASED] }
+        grossLineTotal: { type: [integer, 'null'], format: int64 }
+        productDiscountAmount: { type: integer, format: int64 }
+        orderDiscountAllocated: { type: integer, format: int64 }
+        netLineTotal: { type: [integer, 'null'], format: int64 }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/CheckoutIssue' }
+    CheckoutTotals:
+      type: object
+      required: [grossProductSubtotal, productDiscountTotal, orderDiscountTotal, deliveryFee, deliveryDiscountTotal,
+        grandTotal]
+      properties:
+        grossProductSubtotal: { type: integer, format: int64 }
+        productDiscountTotal: { type: integer, format: int64 }
+        orderDiscountTotal: { type: integer, format: int64 }
+        deliveryFee: { type: integer, format: int64 }
+        deliveryDiscountTotal: { type: integer, format: int64 }
+        grandTotal: { type: integer, format: int64 }
+    CheckoutPaymentOption:
+      type: object
+      required: [method, prepaymentRequirement, requiredPrepaymentAmount]
+      properties:
+        method: { type: string, enum: [PAY_AT_STORE, MANUAL_QR_TRANSFER] }
+        prepaymentRequirement: { type: string, enum: [NOT_REQUIRED, FULL_PREPAYMENT_REQUIRED] }
+        requiredPrepaymentAmount: { type: integer, format: int64 }
+        paymentDueInMinutes: { type: [integer, 'null'] }
+    CheckoutPricingResult:
+      type: object
+      required: [pricingResult, fingerprint, cartVersion, lines, appliedPromotions, coupon, totals, fulfillment,
+        recipient, payment, availablePaymentMethods, issues]
+      properties:
+        pricingResult: { type: string, enum: [VALID, REQUIRES_ACKNOWLEDGMENT, BLOCKED] }
+        fingerprint: { type: string, description: SHA-256 hex (Decision AZ5). }
+        cartVersion: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/CheckoutLine' }
+        appliedPromotions:
+          type: array
+          description: Always empty until S11.
+          items: { type: object }
+        coupon: { type: [object, 'null'], description: Always `null` until S11. }
+        totals: { $ref: '#/components/schemas/CheckoutTotals' }
+        fulfillment:
+          type: object
+          required: [status, requestedDate, slotStart, slotEnd]
+          properties:
+            status: { type: string, enum: [OK, BLOCKED] }
+            requestedDate: { type: [string, 'null'], format: date }
+            slotStart: { type: [string, 'null'] }
+            slotEnd: { type: [string, 'null'] }
+        recipient:
+          type: object
+          required: [name, phone]
+          properties:
+            name: { type: [string, 'null'] }
+            phone: { type: [string, 'null'] }
+        payment: { $ref: '#/components/schemas/CheckoutPaymentOption' }
+        availablePaymentMethods:
+          type: array
+          items: { $ref: '#/components/schemas/CheckoutPaymentOption' }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/CheckoutIssue' }
     CartIssueCode:
       type: string
       enum: [PRODUCT_NOT_FOUND, PRODUCT_SOLD_OUT, PRODUCT_PAUSED, OUTSIDE_SELLING_HOURS, VARIANT_SOLD_OUT,
