@@ -75,6 +75,25 @@ class CartTest {
 	}
 
 	@Test
+	void aMergedLineTakesTheLargerQuantityOfAnEquivalentItemOrIsAdded() {
+		Cart cart = Cart.open(UuidV7.generate(), UuidV7.generate(), NOW);
+		CartItem plain = cart.add(selection(List.of(), null), 3, 50000L, NOW);
+
+		assertThat(cart.merge(selection(List.of(), null), 2, 45000L, NOW.plusSeconds(1)))
+			.isEqualTo(new Cart.Merged(plain.getId(), true, false));
+		assertThat(plain.getQuantity()).isEqualTo(3);
+		assertThat(plain.getLastSeenUnitPrice()).as("untouched").isEqualTo(50000L);
+		assertThat(cart.getUpdatedAt()).isEqualTo(NOW);
+
+		assertThat(cart.merge(selection(List.of(), null), 5, 45000L, NOW.plusSeconds(2)))
+			.isEqualTo(new Cart.Merged(plain.getId(), true, true));
+		assertThat(plain.getQuantity()).isEqualTo(5);
+		Cart.Merged added = cart.merge(selection(List.of(this.milk), null), 1, 60000L, NOW.plusSeconds(3));
+		assertThat(added.existed()).isFalse();
+		assertThat(cart.getItems()).hasSize(2);
+	}
+
+	@Test
 	void aDifferentNoteOrOptionIsAnotherItem() {
 		Cart cart = Cart.open(UuidV7.generate(), UuidV7.generate(), NOW);
 

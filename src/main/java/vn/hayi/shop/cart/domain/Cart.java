@@ -148,6 +148,43 @@ public class Cart {
 		return new Edited(other.getId(), true);
 	}
 
+	/**
+	 * Merges a guest Cart line (Cart & Pricing §6.8, Decision AX2): an equivalent item takes the larger quantity, so
+	 * merging the same line again changes nothing; otherwise a new item is added.
+	 * @return the item the line is in, whether it was already there, and whether anything changed
+	 * @throws DomainException {@code CART_ITEM_QUANTITY_LIMIT}, {@code CART_ITEM_LIMIT}
+	 */
+	public Merged merge(CartSelection selection, int quantity, Long unitPrice, Instant now) {
+		if (quantity > MAX_QUANTITY) {
+			throw new DomainException(CartErrorCode.CART_ITEM_QUANTITY_LIMIT,
+					"Cart " + this.id + " merged line would exceed " + MAX_QUANTITY);
+		}
+		String key = selection.equivalenceKey();
+		CartItem item = this.items.stream()
+			.filter(candidate -> candidate.getEquivalenceKey().equals(key))
+			.findFirst()
+			.orElse(null);
+		if (item != null) {
+			boolean raised = item.raiseTo(quantity, unitPrice, now);
+			if (raised) {
+				this.updatedAt = now;
+			}
+			return new Merged(item.getId(), true, raised);
+		}
+		if (this.items.size() >= MAX_ITEMS) {
+			throw new DomainException(CartErrorCode.CART_ITEM_LIMIT,
+					"Cart " + this.id + " already holds " + MAX_ITEMS + " items");
+		}
+		CartItem added = CartItem.create(selection, quantity, unitPrice, now);
+		this.items.add(added);
+		this.updatedAt = now;
+		return new Merged(added.getId(), false, true);
+	}
+
+	/** The outcome of {@link #merge}. */
+	public record Merged(UUID cartItemId, boolean existed, boolean changed) {
+	}
+
 	/** @throws DomainException {@code CART_ITEM_NOT_FOUND} (Decision AW3) */
 	public void remove(UUID itemId, Instant now) {
 		this.items.remove(item(itemId));

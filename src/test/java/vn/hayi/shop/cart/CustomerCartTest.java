@@ -50,6 +50,7 @@ import com.jayway.jsonpath.JsonPath;
 import vn.hayi.shop.MutableClock;
 import vn.hayi.shop.MutableClockConfiguration;
 import vn.hayi.shop.TestcontainersConfiguration;
+import vn.hayi.shop.cart.domain.Cart;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver.Issue;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver.IssueCode;
@@ -588,6 +589,120 @@ class CustomerCartTest {
 		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(7 + 6);
 	}
 
+	// --- merging the guest Cart (Decision AX) ------------------------------------------------------------------------
+
+	@Test
+	void eachGuestLineIsMergedAddedFlaggedOrRejectedAndLocalPricesAreIgnored() throws Exception {
+		String cart = this.ha.perform(add(item(this.latte, 2, null))).getContentAsString();
+		String existing = JsonPath.read(cart, "$.items[0].cartItemId");
+		this.soldOut.add(this.oat);
+		UUID forged = UuidV7.generate();
+
+		MockHttpServletResponse merged = this.ha.perform(merge(
+				guestLine("a", this.latte, 3, null).replace("}", ", \"unitPrice\": 1}"),
+				guestLine("b", this.latte, 1, null, this.oat), guestLine("c", forged, 1, null),
+				guestLine("d", this.latte, 1, "nóng")));
+
+		assertThat(merged.getStatus()).as(merged.getContentAsString()).isEqualTo(200);
+		String body = merged.getContentAsString();
+		assertThat(JsonPath.<List<String>>read(body, "$.mergeResults[*].ref")).containsExactly("a", "b", "c", "d");
+		assertThat(JsonPath.<List<String>>read(body, "$.mergeResults[*].result"))
+			.containsExactly("MERGED", "ADDED_FLAGGED", "REJECTED", "ADDED");
+		assertThat(JsonPath.<String>read(body, "$.mergeResults[0].cartItemId")).isEqualTo(existing);
+		assertThat(JsonPath.<String>read(body, "$.mergeResults[1].issueCode")).isEqualTo("OPTION_ITEM_SOLD_OUT");
+		assertThat(JsonPath.<String>read(body, "$.mergeResults[2].issueCode")).isEqualTo("PRODUCT_NOT_FOUND");
+		assertThat(body).contains("\"cartItemId\":null");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.cart.items[*].quantity")).as("the larger one, not 2 + 3")
+			.containsExactly(3, 1, 1);
+		assertThat(JsonPath.<List<Integer>>read(body, "$.cart.items[*].unitPrice")).containsExactly(50000, 60000, 50000);
+		assertThat(JsonPath.<Boolean>read(body, "$.cart.hasBlockingIssues")).as("the flagged one").isTrue();
+		assertThat(JsonPath.<Integer>read(body, "$.cart.version")).as("one step for the whole merge").isEqualTo(2);
+	}
+
+	@Test
+	void theSameGuestLinesSentAgainChangeNothing() throws Exception {
+		String lines = guestLine("a", this.latte, 3, null) + ", " + guestLine("b", this.latte, 1, "nóng");
+		String first = this.ha.perform(merge(lines)).getContentAsString();
+		assertThat(JsonPath.<Integer>read(first, "$.cart.version")).isEqualTo(1);
+
+		String again = this.ha.perform(merge(lines)).getContentAsString();
+
+		assertThat(JsonPath.<List<String>>read(again, "$.mergeResults[*].result")).containsExactly("MERGED", "MERGED");
+		assertThat(JsonPath.<List<Integer>>read(again, "$.cart.items[*].quantity")).containsExactly(3, 1);
+		assertThat(JsonPath.<Integer>read(again, "$.cart.version")).isEqualTo(1);
+		String smaller = this.ha.perform(merge(guestLine("a", this.latte, 1, null))).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(smaller, "$.cart.items[*].quantity")).as("the server keeps the larger")
+			.containsExactly(3, 1);
+		assertThat(JsonPath.<Integer>read(smaller, "$.cart.version")).isEqualTo(1);
+	}
+
+	@Test
+	void equivalentGuestLinesAreAddedTogetherUpToTheLimits() throws Exception {
+		MockHttpServletResponse merged = this.ha.perform(merge(guestLine("a", this.latte, 60, " ít  đá"),
+				guestLine("b", this.latte, 30, "ít đá"), guestLine("c", this.latte, 10, "ít đá")));
+
+		String body = merged.getContentAsString();
+		assertThat(JsonPath.<List<String>>read(body, "$.mergeResults[*].result"))
+			.containsExactly("ADDED", "MERGED", "REJECTED");
+		assertThat(JsonPath.<String>read(body, "$.mergeResults[2].issueCode")).isEqualTo("CART_ITEM_QUANTITY_LIMIT");
+		assertThat(JsonPath.<List<Integer>>read(body, "$.cart.items[*].quantity")).containsExactly(90);
+
+		for (int i = 1; i < Cart.MAX_ITEMS; i++) {
+			this.ha.perform(add(item(this.latte, 1, "món " + i)));
+		}
+		String full = this.ha.perform(merge(guestLine("x", this.latte, 1, "món mới"), guestLine("y", this.latte, 95,
+				"ít đá"))).getContentAsString();
+		assertThat(JsonPath.<List<String>>read(full, "$.mergeResults[*].result")).containsExactly("REJECTED", "MERGED");
+		assertThat(JsonPath.<List<String>>read(full, "$.mergeResults[*].issueCode"))
+			.containsExactly("CART_ITEM_LIMIT", null);
+	}
+
+	@Test
+	void aMergeWithOnlyRejectedLinesCreatesNoCartAndTheRequestIsBounded() throws Exception {
+		MockHttpServletResponse merged = this.ha.perform(merge(guestLine("a", UuidV7.generate(), 1, null)));
+
+		assertThat(merged.getStatus()).as(merged.getContentAsString()).isEqualTo(200);
+		assertThat(merged.getContentAsString()).contains("\"cartId\":null");
+		assertThat(cartRows(this.ha)).isZero();
+		assertProblem(this.ha.perform(merge(guestLine("a", this.latte, 1, null), guestLine("a", this.latte, 2, "x"))),
+				400, "VALIDATION_FAILED");
+		assertProblem(this.ha.perform(merge(guestLine("a", this.latte, 1, "a".repeat(256)))), 400, "VALIDATION_FAILED");
+		assertProblem(this.ha.perform(merge(guestLine("a", this.latte, 0, null))), 400, "VALIDATION_FAILED");
+		StringBuilder many = new StringBuilder();
+		for (int i = 0; i <= Cart.MAX_ITEMS; i++) {
+			many.append((i > 0) ? ", " : "").append(guestLine("l" + i, this.latte, 1, null));
+		}
+		assertProblem(this.ha.perform(merge(many.toString())), 400, "VALIDATION_FAILED");
+		this.inactiveBranches.add(this.branch);
+		assertProblem(this.ha.perform(merge(guestLine("a", this.latte, 1, null))), 404, "BRANCH_NOT_FOUND");
+	}
+
+	@Test
+	void aMergeAndConcurrentAddsOfOneItemLoseNothing() throws Exception {
+		this.ha.perform(add(item(this.latte, 1, null)));
+
+		List<MockHttpServletResponse> responses = concurrently(5,
+				i -> (i == 0) ? merge(guestLine("a", this.latte, 50, null)) : add(item(this.latte, 1, null)));
+
+		assertAllOk(responses);
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(after, "$.items[*].quantity")).singleElement()
+			.satisfies(quantity -> assertThat(quantity).isBetween(50, 54));
+		assertThat(JsonPath.<Integer>read(after, "$.version")).as("four adds and one merge, each one step")
+			.isEqualTo(6);
+	}
+
+	@Test
+	void concurrentFirstMergesOfTheSameLinesMakeOneItem() throws Exception {
+		List<MockHttpServletResponse> responses = concurrently(6, i -> merge(guestLine("a", this.latte, 3, null)));
+
+		assertAllOk(responses);
+		String after = this.ha.perform(get(cartPath())).getContentAsString();
+		assertThat(JsonPath.<List<Integer>>read(after, "$.items[*].quantity")).containsExactly(3);
+		assertThat(JsonPath.<Integer>read(after, "$.version")).isEqualTo(1);
+		assertThat(cartRows(this.ha)).isEqualTo(1);
+	}
+
 	// --- the fake menu --------------------------------------------------------------------------------------------
 
 	private UUID product(long price) {
@@ -676,6 +791,15 @@ class CustomerCartTest {
 
 	private MockHttpServletRequestBuilder add(String json) {
 		return post(cartPath() + "/items").contentType(MediaType.APPLICATION_JSON).content(json);
+	}
+
+	private MockHttpServletRequestBuilder merge(String... lines) {
+		return post(cartPath() + "/merge").contentType(MediaType.APPLICATION_JSON)
+			.content("{\"lines\": [" + String.join(", ", lines) + "]}");
+	}
+
+	private String guestLine(String ref, UUID productId, int quantity, String note, UUID... optionItemIds) {
+		return item(productId, quantity, note, optionItemIds).replaceFirst("\\{", "{\"ref\": \"" + ref + "\", ");
 	}
 
 	private MockHttpServletRequestBuilder edit(String cartItemId, String json) {

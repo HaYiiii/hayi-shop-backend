@@ -78,6 +78,20 @@ public class CartItem {
 		this.updatedAt = now;
 	}
 
+	/**
+	 * Takes {@code quantity} when it is larger (a guest Cart merge, Decision AX2); otherwise nothing changes.
+	 * @return whether the quantity went up
+	 */
+	boolean raiseTo(int quantity, Long unitPrice, Instant now) {
+		if (quantity <= this.quantity) {
+			return false;
+		}
+		this.quantity = quantity;
+		this.lastSeenUnitPrice = unitPrice;
+		this.updatedAt = now;
+		return true;
+	}
+
 	/** The same Product with another size, options, note or quantity (Decision AW1). */
 	void change(CartSelection selection, int quantity, Long unitPrice, Instant now) {
 		if (!selection.productId().equals(this.productId)) {

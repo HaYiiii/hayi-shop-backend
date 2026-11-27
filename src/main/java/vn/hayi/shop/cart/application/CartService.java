@@ -2,13 +2,19 @@ package vn.hayi.shop.cart.application;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -16,11 +22,13 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import vn.hayi.shop.cart.domain.Cart;
+import vn.hayi.shop.cart.domain.CartErrorCode;
 import vn.hayi.shop.cart.domain.CartItem;
 import vn.hayi.shop.cart.domain.CartItemOption;
 import vn.hayi.shop.cart.domain.CartRepository;
 import vn.hayi.shop.cart.domain.CartSelection;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver;
+import vn.hayi.shop.catalog.api.CatalogSelectionResolver.IssueCode;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver.ResolvedLine;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver.ResolvedOption;
 import vn.hayi.shop.catalog.api.CatalogSelectionResolver.SelectionRequest;
@@ -54,13 +62,16 @@ public class CartService {
 
 	private final Clock clock;
 
+	private final EntityManager entityManager;
+
 	CartService(CartRepository carts, CatalogSelectionResolver resolver, CustomerProfiles customers, JdbcClient jdbc,
-			Clock clock) {
+			Clock clock, EntityManager entityManager) {
 		this.carts = carts;
 		this.resolver = resolver;
 		this.customers = customers;
 		this.jdbc = jdbc;
 		this.clock = clock;
+		this.entityManager = entityManager;
 	}
 
 	/**
@@ -163,6 +174,132 @@ public class CartService {
 	}
 
 	/**
+	 * Merges the guest Cart of this Branch after sign-in (Cart & Pricing §6.8, Decision AX). Lines are resolved at
+	 * {@code at} and handled in order; equivalent lines of the request are added together, then an equivalent item
+	 * of the Cart takes the larger quantity, so the same lines sent again change nothing and leave the version as it
+	 * is. Runs under the Cart's row lock, {@code READ_COMMITTED} as {@link #add}.
+	 * @return one result per line, in the request's order
+	 * @throws DomainException {@code BRANCH_NOT_FOUND}
+	 */
+	@Transactional(isolation = Isolation.READ_COMMITTED)
+	public List<MergeResult> merge(UUID userId, UUID branchId, List<GuestLine> lines, Instant at) {
+		UUID customerId = customerOf(userId);
+		Map<String, ResolvedLine> resolved = new HashMap<>();
+		this.resolver
+			.resolve(branchId,
+					lines.stream()
+						.map(line -> new SelectionRequest(line.ref(), line.productId(), line.variantId(),
+								line.optionItemIds(), line.quantity()))
+						.toList(),
+					at)
+			.lines()
+			.forEach(line -> resolved.put(line.ref(), line));
+		// Classify each line, then add up the equivalent ones in the request's order.
+		Map<String, MergeResult> results = new LinkedHashMap<>();
+		Map<String, Group> groups = new LinkedHashMap<>();
+		for (GuestLine line : lines) {
+			ResolvedLine resolution = resolved.get(line.ref());
+			String issue = resolution.issues().isEmpty() ? null : resolution.issues().getFirst().code().name();
+			boolean flagged = !resolution.valid() && resolution.issues()
+				.stream()
+				.allMatch(candidate -> FLAGGED_ISSUES.contains(candidate.code()));
+			if (!resolution.valid() && !flagged) {
+				results.put(line.ref(), MergeResult.rejected(line.ref(), issue));
+				continue;
+			}
+			CartSelection selection = selection(line.productId(), line.variantId(), resolution, line.note());
+			Group group = groups.computeIfAbsent(selection.equivalenceKey(),
+					key -> new Group(selection, resolution.unitPrice()));
+			if (group.quantity + line.quantity() > Cart.MAX_QUANTITY) {
+				results.put(line.ref(), MergeResult.rejected(line.ref(), CartErrorCode.CART_ITEM_QUANTITY_LIMIT.name()));
+				continue;
+			}
+			group.quantity += line.quantity();
+			group.lines.add(new GroupLine(line.ref(), flagged ? issue : null));
+			results.put(line.ref(), null);
+		}
+		groups.values().removeIf(group -> group.lines.isEmpty());
+		if (!groups.isEmpty()) {
+			Instant now = this.clock.instant();
+			// Insert first, then lock, as add() does: a locking read of a missing row followed by the insert deadlocks
+			// against a concurrent first merge.
+			insertActiveCart(customerId, branchId, now);
+			Cart cart = this.carts.findActiveLocked(customerId, branchId)
+				.orElseThrow(() -> new IllegalStateException("No ACTIVE Cart right after inserting one"));
+			boolean changed = false;
+			for (Group group : groups.values()) {
+				try {
+					Cart.Merged merged = cart.merge(group.selection, group.quantity, group.unitPrice, now);
+					changed |= merged.changed();
+					for (int i = 0; i < group.lines.size(); i++) {
+						GroupLine line = group.lines.get(i);
+						boolean intoExisting = merged.existed() || i > 0;
+						results.put(line.ref(), new MergeResult(line.ref(),
+								intoExisting ? MergeOutcome.MERGED
+										: (line.issueCode() != null) ? MergeOutcome.ADDED_FLAGGED : MergeOutcome.ADDED,
+								merged.cartItemId(), line.issueCode()));
+					}
+				}
+				catch (DomainException ex) {
+					group.lines.forEach(line -> results.put(line.ref(), MergeResult.rejected(line.ref(), ex.code().name())));
+				}
+			}
+			if (changed) {
+				// One version step for the whole merge, as for every other change.
+				this.entityManager.lock(cart, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+			}
+		}
+		else {
+			requireActiveBranch(branchId);
+		}
+		return List.copyOf(results.values());
+	}
+
+	/** Issues that keep a guest line in the Cart, flagged (Decision F, AX2); any other one rejects the line. */
+	private static final Set<IssueCode> FLAGGED_ISSUES = Set.of(IssueCode.PRODUCT_SOLD_OUT, IssueCode.VARIANT_SOLD_OUT,
+			IssueCode.OPTION_ITEM_SOLD_OUT, IssueCode.OUTSIDE_SELLING_HOURS);
+
+	/** One line of the guest Cart; {@code note} already normalized. */
+	public record GuestLine(String ref, UUID productId, UUID variantId, List<UUID> optionItemIds, int quantity,
+			String note) {
+	}
+
+	public enum MergeOutcome {
+
+		MERGED, ADDED, ADDED_FLAGGED, REJECTED
+
+	}
+
+	/** What became of one guest line; {@code cartItemId} is {@code null} when it was rejected. */
+	public record MergeResult(String ref, MergeOutcome result, UUID cartItemId, String issueCode) {
+
+		static MergeResult rejected(String ref, String issueCode) {
+			return new MergeResult(ref, MergeOutcome.REJECTED, null, issueCode);
+		}
+
+	}
+
+	private static final class Group {
+
+		final CartSelection selection;
+
+		final Long unitPrice;
+
+		final List<GroupLine> lines = new ArrayList<>();
+
+		int quantity;
+
+		Group(CartSelection selection, Long unitPrice) {
+			this.selection = selection;
+			this.unitPrice = unitPrice;
+		}
+
+	}
+
+	private record GroupLine(String ref, String issueCode) {
+	}
+
+	/**
 	 * A partial edit of an item ({@code note} already normalized); a {@link Change#keep()} keeps the current value.
 	 */
 	public record ItemPatch(Change<Integer> quantity, Change<UUID> variantId, Change<List<UUID>> optionItemIds,
@@ -197,6 +334,12 @@ public class CartService {
 	 * for a concurrent first add and then keeps its row), then locks the one that is active.
 	 */
 	private Cart activeCartForUpdate(UUID customerId, UUID branchId, Instant now) {
+		insertActiveCart(customerId, branchId, now);
+		return this.carts.findActiveForUpdate(customerId, branchId)
+			.orElseThrow(() -> new IllegalStateException("No ACTIVE Cart right after inserting one"));
+	}
+
+	private void insertActiveCart(UUID customerId, UUID branchId, Instant now) {
 		Cart opened = Cart.open(customerId, branchId, now);
 		this.jdbc.sql("""
 				INSERT INTO crt_cart (id, customer_id, branch_id, status, created_at, updated_at, version)
@@ -206,8 +349,6 @@ public class CartService {
 			.params(UuidBinary.toBytes(opened.getId()), UuidBinary.toBytes(customerId), UuidBinary.toBytes(branchId),
 					now, now)
 			.update();
-		return this.carts.findActiveForUpdate(customerId, branchId)
-			.orElseThrow(() -> new IllegalStateException("No ACTIVE Cart right after inserting one"));
 	}
 
 	/**
