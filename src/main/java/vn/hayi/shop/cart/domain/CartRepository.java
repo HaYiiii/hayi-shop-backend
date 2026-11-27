@@ -27,4 +27,12 @@ public interface CartRepository extends Repository<Cart, UUID> {
 	@Query("select c from Cart c where c.customerId = :customerId and c.branchId = :branchId and c.status = vn.hayi.shop.cart.domain.CartStatus.ACTIVE")
 	Optional<Cart> findActiveForUpdate(UUID customerId, UUID branchId);
 
+	/**
+	 * Locks the Cart row like {@link #findActiveForUpdate} but leaves the version alone, for a change that may turn
+	 * out to change nothing (a guest Cart merge sent again, Decision AX3). Same {@code READ_COMMITTED} rule.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select c from Cart c where c.customerId = :customerId and c.branchId = :branchId and c.status = vn.hayi.shop.cart.domain.CartStatus.ACTIVE")
+	Optional<Cart> findActiveLocked(UUID customerId, UUID branchId);
+
 }

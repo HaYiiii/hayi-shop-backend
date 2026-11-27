@@ -3,7 +3,10 @@ package vn.hayi.shop.cart.web.customer;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -17,6 +20,11 @@ import vn.hayi.shop.platform.web.InvalidFieldsException;
 import vn.hayi.shop.platform.web.MergePatch;
 import vn.hayi.shop.platform.web.VersionTags;
 import vn.hayi.shop.platform.web.spec.customer.model.CartItemEditDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CartMergeLineDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CartMergeLineResultDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CartMergeOutcomeDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CartMergeRequestDto;
+import vn.hayi.shop.platform.web.spec.customer.model.CartMergeResultDto;
 import vn.hayi.shop.shared.concurrency.ExpectedVersion;
 import vn.hayi.shop.shared.patch.Change;
 import vn.hayi.shop.platform.web.spec.customer.api.CartApi;
@@ -106,6 +114,39 @@ class CustomerCartController implements CartApi {
 		UUID userId = AuthenticatedSession.require().userId();
 		this.carts.clear(userId, branchId, expected);
 		return ResponseEntity.ok(toDto(this.carts.view(userId, branchId, null)));
+	}
+
+	@Override
+	public ResponseEntity<CartMergeResultDto> mergeGuestCart(UUID branchId, CartMergeRequestDto body,
+			String xCsrfToken) {
+		List<InvalidFieldsException.Violation> violations = new ArrayList<>();
+		Set<String> refs = new HashSet<>();
+		List<CartService.GuestLine> lines = new ArrayList<>();
+		for (int i = 0; i < body.getLines().size(); i++) {
+			CartMergeLineDto line = body.getLines().get(i);
+			if (!refs.add(line.getRef())) {
+				violations.add(new InvalidFieldsException.Violation("lines[" + i + "].ref", "DUPLICATE"));
+			}
+			String note = CartService.normalizeNote(line.getNote());
+			if (note != null && note.length() > CartService.MAX_NOTE_LENGTH) {
+				violations.add(new InvalidFieldsException.Violation("lines[" + i + "].note", "TOO_LONG"));
+			}
+			lines.add(new CartService.GuestLine(line.getRef(), line.getProductId(), line.getVariantId(),
+					(line.getOptionItemIds() != null) ? line.getOptionItemIds() : List.of(), line.getQuantity(), note));
+		}
+		if (!violations.isEmpty()) {
+			throw new InvalidFieldsException(violations);
+		}
+		UUID userId = AuthenticatedSession.require().userId();
+		Instant at = instant(body.getAt());
+		List<CartService.MergeResult> results = this.carts.merge(userId, branchId, lines, at);
+		return ResponseEntity.ok(new CartMergeResultDto(toDto(this.carts.view(userId, branchId, at)),
+				results.stream()
+					.map(result -> new CartMergeLineResultDto(result.ref(),
+							CartMergeOutcomeDto.valueOf(result.result().name()))
+						.cartItemId(result.cartItemId())
+						.issueCode(result.issueCode()))
+					.toList()));
 	}
 
 	@Override

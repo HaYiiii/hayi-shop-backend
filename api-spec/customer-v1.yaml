@@ -457,6 +457,39 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/BranchNotFound' }
         '422': { $ref: '#/components/responses/CartItemRejected' }
+  /branches/{branchId}/cart/merge:
+    parameters:
+      - $ref: '#/components/parameters/BranchIdPath'
+    post:
+      tags: [Cart]
+      operationId: mergeGuestCart
+      summary: Merge the guest Cart of a Branch into the caller's Cart after sign-in
+      description: |
+        Merges the local guest Cart of this Branch only (Cart & Pricing §6.8, Decision AX). Lines carry no price; each
+        is resolved at `at` (default now), in order. A line equivalent to an item of the Cart sets its quantity to the
+        larger of the two (`MERGED`), so resending the same lines changes nothing; equivalent lines of one request are
+        added together first. A new valid item → `ADDED`; one only sold out or outside the selling hours → added and
+        flagged (`ADDED_FLAGGED` + `issueCode`); unknown or tampered ids or a wrong choice → `REJECTED` + `issueCode`;
+        above 99 → `REJECTED` `CART_ITEM_QUANTITY_LIMIT`; a new item when the Cart holds 50 → `REJECTED`
+        `CART_ITEM_LIMIT`. The Cart is created on first use; its version moves once when anything changed. Requires
+        `X-CSRF-Token`.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CartMergeRequest' }
+      responses:
+        '200':
+          description: The Cart after the merge, with one result per line.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CartMergeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/BranchNotFound' }
   /carts:
     get:
       tags: [Cart]
@@ -812,6 +845,51 @@ components:
         cart: { $ref: '#/components/schemas/Cart' }
         cartItemId: { type: string, format: uuid, description: The item that remains after the edit. }
         merged: { type: boolean, description: The edited item was merged into another one and is gone. }
+    CartMergeLine:
+      type: object
+      required: [ref, productId, variantId, quantity]
+      properties:
+        ref: { type: string, minLength: 1, maxLength: 64, description: The client's id of the line; unique in the request. }
+        productId: { type: string, format: uuid }
+        variantId: { type: string, format: uuid }
+        optionItemIds:
+          type: array
+          maxItems: 20
+          items: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+        note: { type: [string, 'null'], maxLength: 1024, description: 'At most 255 characters once normalized.' }
+    CartMergeRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/CartMergeLine' }
+        at: { type: [string, 'null'], format: date-time, description: The planned pickup time (default now). }
+    CartMergeOutcome:
+      type: string
+      enum: [MERGED, ADDED, ADDED_FLAGGED, REJECTED]
+    CartMergeLineResult:
+      type: object
+      required: [ref, result]
+      properties:
+        ref: { type: string }
+        result: { $ref: '#/components/schemas/CartMergeOutcome' }
+        cartItemId: { type: [string, 'null'], format: uuid, description: The item the line is in; `null` when rejected. }
+        issueCode:
+          type: [string, 'null']
+          description: |
+            Why the line was flagged or rejected: a `CartIssueCode`, or `CART_ITEM_QUANTITY_LIMIT` / `CART_ITEM_LIMIT`.
+    CartMergeResult:
+      type: object
+      required: [cart, mergeResults]
+      properties:
+        cart: { $ref: '#/components/schemas/Cart' }
+        mergeResults:
+          type: array
+          items: { $ref: '#/components/schemas/CartMergeLineResult' }
     CartItemProblem:
       allOf:
         - $ref: '#/components/schemas/Problem'
